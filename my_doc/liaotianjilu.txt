@@ -1,0 +1,448 @@
+================================================================================
+    智能饮食健康秤 (Smart Scale) - 项目交接说明文档
+    整理日期: 2026-06-06
+================================================================================
+
+目录：
+  一、项目概况与架构
+  二、环境与部署
+  三、前端 UI 改造详情（我们在对话中做的所有改动）
+  四、五主题色系统完整说明
+  五、CSS 变量体系
+  六、头像字母同步机制
+  七、已知问题与注意事项
+  八、修改主题/增加新页面的方法
+  九、常用命令与路径速查
+
+================================================================================
+一、项目概况与架构
+================================================================================
+
+【项目简介】
+  智能饮食健康秤系统，配合 ESP32-P4 嵌入式设备（摄像头 YOLO11n + 压力传感器
+  + LightGBM 营养预测 + LCD 显示），实现食物称重、营养分析、AI健康建议。
+
+【技术栈】
+  - Go 后端：Go 1.22 + Gin 框架，端口 8080
+  - Python RAG 服务：Python 3.10+ / FastAPI，端口 8001
+  - 数据库：PostgreSQL 16 + pgvector 扩展（向量检索）
+  - 前端：纯 HTML/CSS/JS（无框架），Chart.js 图表库
+  - 反向代理：Nginx，端口 80
+  - AI 模型：阿里云百炼 DashScope（qwen-plus / qwen-vl-flash / text-embedding-v2）
+  - 认证：JWT（24小时过期）
+  - 容器化：Docker Compose，4个容器一键部署
+  - 部署服务器：Ubuntu，公网 IP 106.53.198.194
+
+【项目目录】
+  /home/ubuntu/lskj/
+  ├── docker-compose.yml          # Docker 编排（postgres/backend/rag/nginx）
+  ├── start.sh / stop.sh          # 一键启停脚本
+  ├── .env.example                # 环境变量模板
+  ├── nginx/nginx.conf            # Docker 内 Nginx 配置
+  ├── smart-scale-backend/        # Go 后端
+  │   ├── cmd/server/main.go      # 入口
+  │   ├── internal/
+  │   │   ├── config/             # 配置
+  │   │   ├── database/db.go      # pgx 连接池
+  │   │   ├── handler/            # 7个 HTTP handler
+  │   │   ├── middleware/          # JWT/CORS/Logger
+  │   │   ├── model/              # 数据模型
+  │   │   ├── repository/         # 6个数据访问层
+  │   │   ├── router/             # 路由注册
+  │   │   └── service/            # 7个业务逻辑层
+  │   ├── pkg/dashscope/          # 阿里云百炼 API 封装
+  │   ├── frontend/               # ★ 前端静态文件（详见第三节）
+  │   ├── migrations/001_init.sql # 建表 SQL
+  │   └── Dockerfile              # 多阶段构建
+  └── rag-service/                # Python RAG 服务
+      ├── app.py                  # FastAPI 入口
+      ├── routers/rag.py          # 5个 API 端点
+      └── services/               # 向量化/检索/生成
+
+【数据库表】
+  1. users                     - 用户账户
+  2. user_profiles             - 健康画像
+  3. foods                     - 食材营养数据库（31种）
+  4. weigh_records             - 称重记录（分区表）
+  5. user_analysis_summaries   - 营养分析摘要
+  6. health_advice_records     - AI健康建议
+  7. user_health_embeddings    - 向量嵌入（pgvector, 1536维）
+
+【API 端点概要】
+  - 认证：POST /api/v1/auth/register, POST /api/v1/auth/login
+  - 用户：GET/PUT /user/profile, POST /user/avatar, GET /user/health-score
+  - 称重：POST /weigh-in, GET /records, GET /daily-summary
+  - 食物：CRUD /foods
+  - 摘要：POST /summaries/generate, GET /summaries
+  - AI建议：POST /health-advice/generate, GET /health-advice/latest
+  - 仪表盘：GET /dashboard/stats
+  - RAG：/rag/ 前缀代理到 Python 服务
+
+================================================================================
+二、环境与部署
+================================================================================
+
+【服务器信息】
+  - 公网 IP：106.53.198.194
+  - 宿主机 Nginx 配置：/etc/nginx/sites-enabled/smart-scale.conf
+  - 前端根目录指向：/home/ubuntu/lskj/smart-scale-backend/frontend/
+
+【启动方式】
+  方式一（Docker）：
+    cd /home/ubuntu/lskj && docker-compose up -d
+
+  方式二（脚本）：
+    cd /home/ubuntu/lskj && bash start.sh
+
+【Nginx 关键配置】
+  - / → 静态文件（frontend 目录），fallback 到 index.html
+  - /api/ → 代理到 backend:8080（上传限制 10MB）
+  - /rag/ → 代理到 rag-service:8001
+  - CSS/JS 不缓存（开发模式）：Cache-Control: no-cache
+
+  注意：如果修改了 CSS/JS 后不生效，检查 Nginx 缓存配置：
+    location ~* \.(css|js)$ {
+        expires -1;
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+================================================================================
+三、前端 UI 改造详情（对话中完成的所有改动）
+================================================================================
+
+【改动1：修复两个头像字母不一致的 Bug】
+
+  问题：侧边栏头像显示 'K'，个人信息页头像显示 'U'，两个字母不一样。
+  根因：两个头像由不同 JS 函数独立设置：
+    - 侧边栏：app.js 的 initSidebarUser() → 设置 #avatarLetter
+    - 个人信息页：profile.html 的 loadProfileHeader() → 设置 #phcAvatarLetter
+  之前 loadProfileHeader() 的 API 回调里用 'U' 做默认值覆盖了已有值。
+
+  修复动作（3个文件、5处同步代码）：
+    a) profile.html loadProfileHeader()：
+       - 默认值从 'U' 改为空字符串
+       - 设置 #phcAvatarLetter 后同步写 #avatarLetter
+    b) app.js initSidebarUser()：
+       - 设置 #avatarLetter 后同步写 #phcAvatarLetter
+    c) profile.html saveBasicInfo()：
+       - 保存昵称后同步更新两个头像字母
+
+  涉及文件：
+    - /frontend/js/app.js        （第87-152行区域）
+    - /frontend/profile.html     （第232-330行区域）
+
+  重要设计决策：
+    - 只要有显示名（nickname 或 phone），就取首字母大写显示
+    - 没有显示名时字母为空（不再显示误导的 'U'）
+    - 头像图片优先级 > 字母显示（有图片时隐藏字母）
+
+【改动2：背景色加深】
+
+  修改文件：/frontend/css/style-v15.css
+  调整项：
+    - body 径向渐变 alpha：0.50/0.38/0.28/0.40 → 0.65/0.52/0.42/0.55
+    - body::before 光晕：0.08 → 0.14
+    - body::after 网点纹理：0.032 → 0.055
+    - .main-panel 内部光斑：同步加深
+
+【改动3：五页五主题色系统（核心改动）】
+
+  这是最大的改动。在 style-v15.css 中实现了完整的 CSS 变量主题系统，
+  每个页面（仪表盘/历史记录/营养报告/食物库/个人中心）拥有独立的主题色。
+  切换菜单时，侧边栏 + 右侧主内容区的所有颜色联动切换，带 0.5s 平滑过渡动画。
+
+  详情见第四节。
+
+【改动4：主题色刷入动画（已回退，供参考）】
+
+  尝试做了一版"切换页面时新主题色从上往下刷入"的动画效果：
+    - CSS：添加 .theme-wipe 元素 + @keyframes themeWipeDown
+    - JS：triggerThemeWipe() 函数在 checkAuth() 时调用
+  效果是侧边栏+主内容区一起被新颜色刷过覆盖。
+  用户觉得效果不理想，已完整回退。
+  如果以后想重新尝试这个方向，代码在 git 历史中可找回。
+
+================================================================================
+四、五主题色系统完整说明
+================================================================================
+
+【设计理念】
+  每个菜单页对应一个独立主题色，包含：
+  - 侧边栏渐变背景（从上到下 4 段色）
+  - 全局页面背景渐变
+  - 主面板光斑颜色
+  - 头像渐变色
+  - 按钮/标签/边框高亮色
+  - 卡片悬浮效果
+  - 表格 hover / 输入框 focus / 分页激活态
+
+【五个主题色详情】
+
+  ┌──────────┬──────────┬─────────────────────┬──────────┐
+  │ 页面     │ 主题ID   │ 主色 → 辅色          │ 风格     │
+  ├──────────┼──────────┼─────────────────────┼──────────┤
+  │ 仪表盘   │dashboard │ #667eea → #764ba2    │ 靛蓝紫   │
+  │ 历史记录 │records   │ #0ea5e9 → #0891b2    │ 青碧色   │
+  │ 营养报告 │reports   │ #f59e0b → #d97706    │ 琥珀橙   │
+  │ 食物库   │foods     │ #ec4899 → #be185d    │ 玫瑰粉   │
+  │ 个人中心 │profile   │ #8b5cf6 → #6d28d9    │ 紫罗兰   │
+  └──────────┴──────────┴─────────────────────┴──────────┘
+
+【实现方式】
+
+  1. CSS 变量体系（在 :root 中定义，见第五节）
+  2. 每个主题通过 [data-theme="xxx"] 选择器覆盖 CSS 变量
+  3. 每个 HTML 页面在 <body> 上标记 data-theme 属性：
+     - dashboard.html → <body data-theme="dashboard">
+     - records.html   → <body data-theme="records">
+     - reports.html   → <body data-theme="reports">
+     - foods.html     → <body data-theme="foods">
+     - profile.html   → <body data-theme="profile">
+  4. 所有 UI 组件使用 var(--t-xxx) 引用主题变量，而非硬编码颜色
+  5. 所有颜色相关属性加 transition: 0.5s ease，切换时平滑过渡
+
+【每个主题控制的内容范围】
+
+  侧边栏：
+    - 背景渐变 (linear-gradient: --t-dark → --t-mid1 → --t-mid2 → --t-primary)
+    - 阴影颜色（跟随主题深色）
+
+  全局页面：
+    - body 背景渐变 (--bg-grad)
+    - body::before 弥散光晕 (--glow-rgb)
+    - body::after 网点纹理色
+
+  主面板 (.main-panel)：
+    - 内部光斑颜色（跟随 --t-r/--t-g/--t-b）
+    - 边框颜色
+    - 阴影颜色
+
+  通用组件：
+    - .btn-primary 渐变色
+    - .user-avatar-circle 头像渐变色
+    - .pagination button.active 渐变色
+    - 输入框 focus 边框色
+    - 卡片 hover 边框/阴影色
+    - 表格行 hover 背景色
+    - 统计卡片边框色
+    - 下拉选择框 hover 边框色
+    - 搜索框边框色
+    - 食物卡片 hover 顶部彩条
+
+================================================================================
+五、CSS 变量体系
+================================================================================
+
+【核心变量定义（在 :root 中）】
+
+  主题色变量（每个主题会覆盖这些）：
+    --t-primary     #667eea   主色（侧边栏底部、按钮渐变起点）
+    --t-secondary   #764ba2   辅色（侧边栏阴影、按钮渐变终点）
+    --t-dark        #2d2490   侧边栏顶部深色
+    --t-mid1        #3730a3   侧边栏中段1
+    --t-mid2        #4338ca   侧边栏中段2
+    --t-r/g/b       102,126,234  主色 RGB（用于 rgba() 构建）
+    --t-sr/sg/sb    118,75,162   辅色 RGB
+    --t-dr/dg/db    45,36,144    深色 RGB
+
+  页面背景：
+    --bg-grad    径向渐变（每个主题有不同配色）
+    --glow-rgb   光晕 RGB
+
+  派生变量（自动跟随主题）：
+    --primary       = var(--t-primary)
+    --primary-dark  = var(--t-secondary)
+    --secondary     = var(--t-secondary)
+    --shadow-sm/md/lg = rgba(var(--t-r),var(--t-g),var(--t-b), ...)
+
+【关键设计决策】
+  - 为什么用单独的 RGB 变量（--t-r, --t-g, --t-b）而不是直接用 hex？
+    → 因为 rgba() 需要 RGB 分量，CSS 无法直接从一个 hex 变量中提取分量，
+      所以需要分开定义。
+  - --transition 设为 0.5s ease（比原来的 0.35s 稍长），让主题切换更平滑
+
+================================================================================
+六、头像字母同步机制
+================================================================================
+
+【涉及元素】
+  - 侧边栏头像：<span id="avatarLetter"> - 在 app.js 中通过 includeSidebar() 注入
+  - 个人信息页头像：<span id="phcAvatarLetter"> - 在 profile.html 中硬编码
+  - 个人信息页图片：<img id="phcAvatarImg"> - 用户上传的头像图片
+  - 侧边栏图片：<img id="avatarImg"> - 在 app.js 中通过 includeSidebar() 注入
+
+【同步流向】
+  任何一方更新字母时，都会同步到另一方：
+
+  场景1 - 其他页面初始化（app.js initSidebarUser）：
+    从 localStorage 读取 user → 取首字母 → 设 #avatarLetter
+    → 顺便设 #phcAvatarLetter（如果当前在个人信息页）
+
+  场景2 - 个人信息页加载（profile.html loadProfileHeader）：
+    先 localStorage 缓存快速填充 → 再 API 拉取覆盖
+    → 每次设 #phcAvatarLetter 后同步 #avatarLetter
+
+  场景3 - 保存基本信息（profile.html saveBasicInfo）：
+    API 保存成功后 → 根据 nickname 取首字母
+    → 同时设 #phcAvatarLetter 和 #avatarLetter
+
+  场景4 - 用户头像优先级：
+    有头像图片 → 显示 img，隐藏字母 span
+    无头像图片 → 隐藏 img，显示字母 span
+
+【潜在问题】
+  - 如果两个页面不在同一个 DOM 中（SPA 场景不会出现，因为我们是多页应用），
+    同步代码会静默失败（getElementById 返回 null），不影响功能。
+  - 头像图片缓存在 localStorage('user_avatar')，注意清缓存时机。
+
+================================================================================
+七、已知问题与注意事项
+================================================================================
+
+1. CSS 文件版本
+   - 当前主样式文件：css/style-v15.css（虽然注释写 v16，文件名未改）
+   - 旧版本保留：css/style.css
+   - 所有 HTML 页面引用的是 style-v15.css
+   - 如果要大改样式，建议创建 style-v16.css 并批量替换 HTML 引用
+
+2. Nginx 不缓存 CSS/JS
+   - 当前开发模式下 CSS/JS 不缓存，每次请求都会重新下载
+   - 上线后考虑改为版本化文件名或适度缓存
+
+3. 主题色过渡
+   - 过渡时间 0.5s，如果觉得太快/太慢，修改 --transition 变量即可
+   - 注意：过渡只作用于颜色属性，不会影响布局
+
+4. 侧边栏导航
+   - 所有页面（除 index.html）通过 includeSidebar() 动态注入侧边栏
+   - 侧边栏 HTML 定义在 app.js 中
+   - 修改侧边栏结构需要改 app.js 的 includeSidebar() 函数
+
+5. 页面跳转方式
+   - 菜单点击使用 window.location.href 全量跳转（非 SPA）
+   - 每次跳转都会触发完整的页面生命周期（checkAuth → initSidebarUser → 页面JS）
+
+6. 身份验证流程
+   - app.js checkAuth() 检查 localStorage 中的 JWT token
+   - 无 token 跳转到 index.html（登录页）
+   - 所有 API 请求通过 apiGet/apiPost 自动带 Authorization header
+
+7. API 请求封装
+   - apiGet(url), apiPost(url, data), apiPut(url, data), apiDelete(url)
+   - 定义在 app.js 中
+   - 自动处理 JWT token 注入和 401 跳转
+
+================================================================================
+八、修改主题/增加新页面的方法
+================================================================================
+
+【如何调整某个页面的主题色】
+
+  1. 打开 css/style-v15.css
+  2. 找到对应的 [data-theme="xxx"] 选择器块（约在第 50-65 行）
+  3. 修改以下变量：
+     - --t-primary / --t-secondary（主辅色）
+     - --t-dark / --t-mid1 / --t-mid2（侧边栏四段色，从上到下）
+     - --t-r, --t-g, --t-b（主色 RGB）、--t-sr, --t-sg, --t-sb（辅色 RGB）
+     - --t-dr, --t-dg, --t-db（侧边栏深色 RGB，用于阴影）
+     - --glow-rgb（页面光晕色）
+     - --bg-grad（页面背景渐变）
+  4. 保存，刷新浏览器（Nginx 不缓存，即时生效）
+
+  提示：Hex 颜色转 RGB 分量可以用任意在线工具，
+  例如 #0ea5e9 → R:14, G:165, B:233
+
+【如何新增一个页面并分配主题色】
+
+  1. 创建新 HTML 文件（如 settings.html），复制现有页面的基本结构
+     - 保留 sidebar include 脚本和 checkAuth 调用
+     - <body data-theme="settings"> ← 指定主题ID
+
+  2. 在 css/style-v15.css 中添加新主题规则：
+     [data-theme="settings"] {
+       --t-primary:#xxxxxx; --t-secondary:#xxxxxx;
+       --t-dark:#xxxxxx; --t-mid1:#xxxxxx; --t-mid2:#xxxxxx;
+       --t-r:xx;--t-g:xx;--t-b:xx;
+       --t-sr:xx;--t-sg:xx;--t-sb:xx;
+       --t-dr:xx;--t-dg:xx;--t-db:xx;
+       --glow-rgb:xx,xx,xx;
+       --bg-grad:radial-gradient(...);
+     }
+
+  3. 在 app.js 的 includeSidebar() 中添加菜单项链接（约第180行）
+
+  4. 新页面如果需要使用 app.js 的通用函数，引入：
+     <script src="js/app.js"></script>
+
+  ★ 注意：一定要设置完整的 RGB 分量变量，否则 rgba() 构建的颜色
+    会回退到 :root 默认值（紫色）。
+
+================================================================================
+九、常用命令与路径速查
+================================================================================
+
+【项目根目录】
+  cd /home/ubuntu/lskj/
+
+【启动/停止】
+  bash start.sh          # 启动所有服务
+  bash stop.sh           # 停止所有服务
+  docker-compose up -d   # Docker 方式启动
+  docker-compose down    # Docker 方式停止
+  docker-compose logs -f # 查看日志
+
+【前端文件位置】
+  所有前端文件：/home/ubuntu/lskj/smart-scale-backend/frontend/
+  ├── index.html          # 登录页
+  ├── dashboard.html      # 仪表盘
+  ├── records.html        # 历史记录
+  ├── reports.html        # 营养报告
+  ├── foods.html          # 食物库
+  ├── profile.html        # 个人中心
+  ├── css/
+  │   ├── style-v15.css   # ★ 当前主样式（五主题系统）
+  │   └── style.css       # 旧版样式（保留）
+  └── js/
+      └── app.js          # 通用工具库（API/JWT/侧边栏/Toast）
+
+【Nginx 配置】
+  Docker 内：/home/ubuntu/lskj/nginx/nginx.conf
+  宿主机：  /etc/nginx/sites-enabled/smart-scale.conf
+  reload：  sudo nginx -s reload 或 docker exec nginx nginx -s reload
+
+【后端目录】
+  /home/ubuntu/lskj/smart-scale-backend/
+  - 配置文件：configs/config.yaml
+  - 数据库迁移：migrations/001_init.sql
+  - 测试数据生成：scripts/generate_test_data.go
+
+【RAG 服务目录】
+  /home/ubuntu/lskj/rag-service/
+  - 入口：app.py
+  - 提示词：prompts/system_prompt.py
+
+【登录信息（测试用）】
+  前端地址：http://106.53.198.194
+
+================================================================================
+附录：对话中遇到的典型问题及解决方案
+================================================================================
+
+问题1：侧边栏头像字母和个人信息页不一致
+  原因：两个函数独立设置，一个用 'U' 做默认值覆盖了另一个
+  解决：两边互相同步，默认值改为空字符串
+
+问题2：CSS 修改不生效
+  原因：浏览器缓存
+  解决：Nginx 已配置 CSS/JS 不缓存（Cache-Control: no-cache），
+        如果还不行，Ctrl+Shift+R 强制刷新
+
+问题3：主题色切换突兀
+  解决：所有颜色相关属性加 transition: 0.5s ease，平滑过渡
+
+问题4：五个页面无法区分主题
+  解决：给每个 <body> 加 data-theme 属性，CSS 用属性选择器覆盖变量
+
+================================================================================
+                          -- 文档结束 --
+================================================================================

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>仪表盘 - 智能饮食健康秤</title>
+    <link rel="stylesheet" href="css/style-v15.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        /* Dashboard-specific styles */
+        .advice-gradient { background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%); border-left: 4px solid #667eea; }
+        .gen-btn {
+            margin-top: 12px; padding: 10px 20px; background: #667eea; color: white;
+            border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .gen-btn:hover { background: #5a4fbf; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(102,126,234,0.4); }
+        .gen-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        #calorieChart { max-height: 300px; }
+    </style>
+</head>
+<body data-theme="dashboard">
+    <nav class="sidebar">
+        <div class="sidebar-header"><span class="logo-icon">🥗</span><h2>智能饮食秤</h2></div>
+        <ul class="nav-menu">
+            <li class="active"><a href="dashboard.html"><span>📊</span> 仪表盘</a></li>
+            <li><a href="records.html"><span>📝</span> 历史记录</a></li>
+            <li><a href="reports.html"><span>📋</span> 营养报告</a></li>
+            <li><a href="foods.html"><span>🍽️</span> 食物库</a></li>
+            <li><a href="profile.html" id="profilePageLink"><span>👤</span> 个人中心</a></li>
+        </ul>
+        <div class="sidebar-user-area" id="sidebarUserArea">
+            <div class="sidebar-user-row">
+                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='profile.html'">
+                    <span id="avatarLetter">?</span></div>
+                <div class="sidebar-logout-area">
+                    <a href="javascript:void(0)" onclick="logout()" class="logout-btn-pill">退出登录</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="main-panel">
+            <header class="top-bar"><h3>📊 仪表盘</h3></header>
+
+        <!-- 统计卡片 -->
+        <div class="stats-grid" id="statsCards">
+            <div class="stat-card stat-energy">
+                <div><span class="stat-icon">🔥</span></div>
+                <div><span class="stat-label">本周平均热量</span><span class="stat-value" id="statCal">--</span></div>
+            </div>
+            <div class="stat-card stat-protein">
+                <div><span class="stat-icon">💪</span></div>
+                <div><span class="stat-label">本周平均蛋白质</span><span class="stat-value" id="statPro">--</span></div>
+            </div>
+            <div class="stat-card stat-fat">
+                <div><span class="stat-icon">🧈</span></div>
+                <div><span class="stat-label">本周平均脂肪</span><span class="stat-value" id="statFat">--</span></div>
+            </div>
+            <div class="stat-card stat-carb">
+                <div><span class="stat-icon">🍚</span></div>
+                <div><span class="stat-label">本周平均碳水</span><span class="stat-value" id="statCarb">--</span></div>
+            </div>
+        </div>
+
+        <!-- 图表 + AI建议 -->
+        <div class="charts-row">
+            <div class="chart-card">
+                <h4>📈 近7天热量趋势</h4>
+                <canvas id="calorieChart"></canvas>
+            </div>
+            <div class="chart-card advice-gradient">
+                <h4>🤖 AI 健康建议</h4>
+                <div id="adviceContent"><p class="empty-text">暂无建议，点击按钮生成</p></div>
+                <button onclick="generateAdvice()" class="gen-btn">✨ 生成AI建议</button>
+            </div>
+        </div>
+
+        <!-- 最近餐食 -->
+        <div class="card">
+            <h4>🍴 最近餐食记录</h4>
+            <div id="recentMeals"><p class="empty-text">暂无数据</p></div>
+        </div>
+        </div><!-- end main-panel -->
+    </main>
+
+    <script src="js/app.js?v=13"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAuth();
+            loadStats();
+            loadChart();
+            loadRecentMeals();
+            loadLatestAdvice();
+        });
+
+        async function loadStats() {
+            try {
+                const d = await apiGet('/dashboard/stats');
+                if (d.code === 0 && d.data) {
+                    const s = d.data;
+                    document.getElementById('statCal').textContent = (s.avg_daily_calories?.toFixed(0) || '--') + ' kcal';
+                    document.getElementById('statPro').textContent = (s.avg_protein?.toFixed(1) || '--') + ' g';
+                    document.getElementById('statFat').textContent = (s.avg_fat?.toFixed(1) || '--') + ' g';
+                    document.getElementById('statCarb').textContent = (s.avg_carbs?.toFixed(1) || '--') + ' g';
+                }
+            } catch(e) { console.error('Load stats error:', e); }
+        }
+
+        async function loadChart() {
+            try {
+                const d = await apiGet('/dashboard/recent-meals');
+                if (d.code !== 0 || !d.data?.length) return;
+                const meals = d.data.slice(-7);
+                const labels = meals.map(m => m.created_at?.split('T')[0] || '');
+                const calories = meals.map(m => m.cooked_energy_kcal || 0);
+
+                new Chart(document.getElementById('calorieChart'), {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [{
+                            label: '热量 (kcal)',
+                            data: calories,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102,126,234,0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            pointBackgroundColor: '#667eea',
+                            pointBorderColor: '#fff',
+                            pointRadius: 5,
+                            pointHoverRadius: 7
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true, grid: { color: '#f0f0f0' } } }
+                    }
+                });
+            } catch(e) { console.error('Load chart error:', e); }
+        }
+
+        async function loadRecentMeals() {
+            try {
+                const d = await apiGet('/dashboard/recent-meals?page_size=5');
+                if (d.code !== 0 || !d.data?.length) return;
+                const html = d.data.map(m => `
+                    <div class="meal-item">
+                        <strong>${(m.ingredients || []).join(', ') || '未知食材'}</strong>
+                        <span class="energy-badge">${m.cooked_energy_kcal || 0} kcal</span>
+                        <span class="time">${m.cooking_method || ''} | ${(m.created_at || '').split('T')[0]}</span>
+                    </div>
+                `).join('');
+                document.getElementById('recentMeals').innerHTML = html;
+            } catch(e) { console.error('Load meals error:', e); }
+        }
+
+        async function loadLatestAdvice() {
+            try {
+                const d = await apiGet('/health-advice/latest?type=weekly');
+                if (d.code === 0 && d.data?.advice_content) {
+                    document.getElementById('adviceContent').innerHTML =
+                        `<pre class="advice-text">${d.data.advice_content}</pre>`;
+                }
+            } catch(e) {}
+        }
+
+        async function generateAdvice() {
+            const el = document.getElementById('adviceContent');
+            const btn = document.querySelector('.gen-btn');
+            el.innerHTML = '<p class="empty-text">⏳ AI 正在分析您的饮食数据，请稍候...</p>';
+            btn.disabled = true;
+            btn.textContent = '分析中...';
+            try {
+                const d = await apiPost('/health-advice/generate');
+                if (d.code === 0 && d.data?.advice_content) {
+                    el.innerHTML = `<pre class="advice-text">${d.data.advice_content}</pre>`;
+                } else {
+                    el.innerHTML = `<p class="empty-text" style="color:#f44336;">${d.message || '生成失败'}</p>`;
+                }
+            } catch(e) {
+                el.innerHTML = `<p class="empty-text" style="color:#f44336;">请求失败: ${e.message}</p>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '✨ 生成AI建议';
+            }
+        }
+    </script>
+</body>
+</html>

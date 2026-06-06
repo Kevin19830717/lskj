@@ -1,0 +1,29 @@
+server:
+  port: 8080
+  mode: debug
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: 321738392
+  dbname: smart_scale
+  sslmode: disable
+
+jwt:
+  secret: smart-diet-jwt-secret-key-change-me-in-production
+  expire_hours: 24
+
+aliyun:
+  api_key: sk-07c88e8d2fe8470c934c19682c403467
+  text_model: qwen-plus
+  vl_model: qwen-vl-flash
+  embedding_model: text-embedding-v2
+
+upload:
+  path: ./uploads
+  max_size_mb: 10
+
+cron:
+  weekly_advice: "0 8 * * 1"
+  daily_archive: "0 2 * * *"

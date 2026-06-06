@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能饮食健康秤 - 历史记录</title>
+    <link rel="stylesheet" href="css/style-v15.css">
+</head>
+<body data-theme="records">
+    <nav class="sidebar">
+        <div class="sidebar-header"><span class="logo-icon">🥗</span><h2>智能饮食秤</h2></div>
+        <ul class="nav-menu">
+            <li><a href="dashboard.html"><span>📊</span> 仪表盘</a></li>
+            <li class="active"><a href="records.html"><span>📝</span> 历史记录</a></li>
+            <li><a href="reports.html"><span>📋</span> 营养报告</a></li>
+            <li><a href="foods.html"><span>🍽️</span> 食物库</a></li>
+            <li><a href="profile.html" id="profilePageLink"><span>👤</span> 个人中心</a></li>
+        </ul>
+        <div class="sidebar-user-area" id="sidebarUserArea">
+            <div class="sidebar-user-row">
+                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='profile.html'">
+                    <span id="avatarLetter">?</span></div>
+                <div class="sidebar-logout-area">
+                    <a href="javascript:void(0)" onclick="logout()" class="logout-btn-pill">退出登录</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="main-panel">
+            <header class="top-bar">
+            <h3>📝 称重历史记录</h3>
+            <div class="filter-row">
+                <input type="date" id="startDate" onchange="loadRecords()">
+                <span>至</span>
+                <input type="date" id="endDate" onchange="loadRecords()">
+            </div>
+        </header>
+
+        <section class="table-section card">
+            <div class="toolbar">
+                <span id="recordCount">共 0 条记录</span>
+                <div class="pagination" id="pagination"></div>
+            </div>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>#</th><th>时间</th><th>食材</th><th>重量(g)</th><th>烹饪方式</th>
+                        <th>热量(kcal)</th><th>蛋白质(g)</th><th>脂肪(g)</th><th>碳水(g)</th>
+                    </tr>
+                </thead>
+                <tbody id="recordsBody">
+                    <tr><td colspan="9" class="empty-text">加载中...</td></tr>
+                </tbody>
+            </table>
+        </section>
+        </div><!-- end main-panel -->
+    </main>
+
+    <script src="js/app.js?v=13"></script>
+    <script>
+        let currentPage = 1, pageSize = 20;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAuth(); loadRecords();
+        });
+
+        function loadRecords() {
+            let url = `/records?page=${currentPage}&page_size=${pageSize}`;
+            const sd = document.getElementById('startDate').value;
+            const ed = document.getElementById('endDate').value;
+            if (sd) url += `&start_date=${sd}`;
+            if (ed) url += `&end_date=${ed}`;
+
+            apiGet(url).then(res => {
+                if (!res.data) return;
+                const d = res.data;
+                document.getElementById('recordCount').textContent = `共 ${d.total} 条记录`;
+                renderTable(d.items || []);
+                renderPagination(d.page, d.total_pages);
+            });
+        }
+
+        function renderTable(items) {
+            const tbody = document.getElementById('recordsBody');
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="9" class="empty-text">暂无记录</td></tr>'; return;
+            }
+            tbody.innerHTML = items.map((r,i) => `
+                <tr>
+                    <td>${r.id}</td>
+                    <td>${formatTime(r.created_at)}</td>
+                    <td title="${r.ingredient_names?.join(', ') || r.ingredients.join(', ')}">${(r.ingredient_names||r.ingredients).join(', ')}</td>
+                    <td>${(r.raw_weights_g||[]).map(w=>Math.round(w)).join('/')}</td>
+                    <td>${r.cooking_method_label || r.cooking_method || '-'}</td>
+                    <td>${r.cooked_energy_kcal != null ? Math.round(r.cooked_energy_kcal) : '-'}</td>
+                    <td>${r.cooked_protein_g != null ? r.cooked_protein_g.toFixed(1) : '-'}</td>
+                    <td>${r.cooked_fat_g != null ? r.cooked_fat.toFixed(1) : '-'}</td>
+                    <td>${r.cooked_carbohydrate_g != null ? r.cooked_carbohydrate_g.toFixed(1) : '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function renderPagination(page, totalPages) {
+            const el = document.getElementById('pagination');
+            if (totalPages <= 1) { el.innerHTML=''; return; }
+            let html='';
+            if(page>1) html+=`<button onclick="goPage(${page-1})">上一页</button>`;
+            for(let i=Math.max(1,page-2); i<=Math.min(totalPages,page+2); i++){
+                html+=`<button class="${i===page?'active':''}" onclick="goPage(${i})">${i}</button>`;
+            }
+            if(page<totalPages) html+=`<button onclick="goPage(${page+1})">下一页</button>`;
+            el.innerHTML=html;
+        }
+
+        function goPage(p) { currentPage=p; loadRecords(); }
+    </script>
+</body>
+</html>

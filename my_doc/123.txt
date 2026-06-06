@@ -1,0 +1,756 @@
+以下是修改后的完整提示词，已按要求调整归档时间、移除Redis、去除体重展示、锁定阿里云百炼服务。
+
+---
+
+```
+【角色设定】
+你是一位资深的全栈工程师和DevOps专家。现在需要在一台新购买的腾讯云轻量应用服务器（已安装 Go 1.22+，其他环境空白）上，从零搭建一个完整的“智能饮食健康秤”系统。
+
+【项目核心要求】
+- 数据库必须使用 PostgreSQL，并开启 pgvector 扩展。
+- 后端使用 Go 1.22+ 和 Gin 框架。
+- 前端使用原生 HTML/CSS/JavaScript，不使用任何前端框架（如Vue、React）。
+- 需要实现 RAG（检索增强生成）功能：将用户每周饮食摘要向量化存储，并在生成健康建议时检索历史相似摘要，注入 Prompt 调用阿里云百炼大模型生成个性化建议。
+- 需要实现数据分层归档策略：原始称重记录保留1个月，之后聚合为日度汇总；日度汇总保留3个月，之后聚合为周度摘要；周度摘要保留1年，之后聚合为月度摘要；月度摘要保留3年，之后聚合为年度摘要；年度摘要长期保存。
+- 需要包含用户注册登录、个人画像管理、体检报告上传（阿里云百炼多模态解析）、称重数据上报、历史记录查询、营养摘要查看、AI健康建议查看等功能。
+- 需要实现周度定时任务，自动生成上周营养摘要并触发RAG生成建议。
+- 需要模拟生成7年测试数据，至少包含3个虚拟用户，验证分层归档和RAG检索的可用性。
+- 本项目不使用Redis，JWT采用无状态模式，定时任务直接使用cron库，无需消息队列。
+
+【LLM与Embedding服务商锁定】
+- 大语言模型（LLM）：阿里云百炼平台，使用通义千问系列模型。文本生成调用 qwen-plus 或 qwen-max；多模态调用 qwen-vl-plus 或 qwen-vl-max 用于体检报告解析。
+- 向量嵌入（Embedding）：阿里云百炼平台，使用 text-embedding-v2 模型，向量维度为1536。
+- 认证方式：通过阿里云AccessKey ID和AccessKey Secret调用API，需要在配置文件中设置。
+- 后端代码中不再抽象多个provider，直接针对阿里云百炼SDK或HTTP API实现。如需后续扩展，可在service层内部封装通用接口，但当前版本只实现阿里云。
+
+【第一阶段：基础环境搭建】
+1. 更新系统包管理器，安装必要的工具：git, curl, wget, build-essential。
+2. 安装 PostgreSQL 16（如果腾讯云镜像有较新版本就用最新稳定版）。
+   - 添加官方仓库，安装 postgresql-server 和 postgresql-contrib。
+   - 启动服务，设置开机自启。
+   - 切换至 postgres 用户，创建数据库用户 scaleuser 并设置密码 scale_password。
+   - 创建数据库 smart_scale，所有者为 scaleuser。
+   - 在 smart_scale 数据库中启用 pgvector 扩展（需先安装 postgresql-16-pgvector 包）。
+3. 不安装Redis。原因：本项目用户量小，JWT采用无状态模式无需黑名单；定时任务直接使用Go的cron库在进程内调度；无分布式场景，不需要消息队列或缓存中间件。
+4. 确认 Go 版本（要求 ≥1.22），设置 GOPROXY=https://goproxy.cn,direct 加速依赖下载。
+
+【第二阶段：数据库表结构设计】
+使用 Go 的 database/sql 和 lib/pq 驱动连接 PostgreSQL。创建数据库迁移脚本（SQL文件），在 Go 启动时自动执行。
+
+创建以下表：
+
+1. users 表：id (serial primary key), phone (varchar unique), password_hash (varchar), nickname (varchar), avatar_url (varchar), created_at (timestamptz), updated_at (timestamptz)。
+
+2. user_profiles 表：user_id (int primary key references users), gender (varchar check in male/female/other), age (int), height_cm (numeric), weight_kg (numeric), health_goal (varchar check in lose_weight/maintain/gain_muscle), allergies (jsonb default '[]'), medical_reports (jsonb default '{}'), created_at, updated_at。
+
+3. weigh_records 表：使用 PostgreSQL 原生分区表，按 created_at 范围分区，每周一个分区。字段：id (bigserial), user_id (int), device_id (varchar), food_items (jsonb), total_weight_g (int), total_calories (int), total_protein_g (numeric), total_fat_g (numeric), total_carbs_g (numeric), total_vitamin_c_mg (numeric), total_potassium_mg (numeric), cooking_method (varchar), created_at (timestamptz not null)。主键为 (id, created_at)。创建索引 (user_id, created_at desc)。创建自动生成未来分区的函数。
+
+4. user_analysis_summaries 表：id (bigserial primary key), user_id (int), summary_date (date), summary_type (varchar check in daily/weekly/monthly/yearly), source (varchar check in auto/manual, 默认auto), insights (jsonb), created_at (timestamptz)。允许多条记录，唯一约束为 (user_id, summary_date, summary_type, source)。
+
+5. health_advice_records 表：id (bigserial primary key), user_id (int), week_start_date (date), advice_content (text), advice_type (varchar check in weekly/monthly/long_term), generated_at (timestamptz)。
+
+6. user_health_embeddings 表：启用pgvector扩展后创建。字段：id (bigserial primary key), user_id (int), source_type (varchar check in weekly_summary/medical_report/monthly_summary/daily_summary/yearly_summary), source_date (date), content_text (text), embedding (vector(1536))，metadata (jsonb default '{}'), created_at (timestamptz)。创建 IVFFlat 索引 (lists=100) 和 (user_id, source_date desc) 索引。
+
+将建表语句写入 migrations/001_init.sql，Go启动时执行。
+
+【第三阶段：后端项目骨架与配置】
+1. 初始化 Go 模块，项目名 smart-scale-backend。
+2. 采用标准布局：cmd/server/main.go 入口；internal/handler/、internal/service/、internal/repository/、internal/model/、internal/middleware/、internal/cron/；pkg/config/；migrations/；configs/config.yaml。
+3. 使用 viper 读取配置，支持环境变量覆盖。配置包含：数据库连接串、JWT密钥、阿里云AccessKey ID和Secret、LLM模型名、Embedding模型名、文件上传路径。
+4. 优雅启动与关闭，监听 8080 端口。
+5. CORS 中间件允许前端跨域。
+6. 请求日志中间件，记录方法、路径、状态码、耗时。
+
+【第四阶段：用户认证模块】
+1. POST /api/v1/auth/register：接收phone、password、nickname，bcrypt加密密码，写入users表和user_profiles空记录。
+2. POST /api/v1/auth/login：验证手机号和密码，返回JWT token（24小时有效）。
+3. JWT中间件：从Authorization: Bearer <token>解析验证，将user_id注入context。
+4. GET /api/v1/user/me：返回当前登录用户基础信息（需认证）。
+
+【第五阶段：用户画像与体检报告上传】
+1. GET /api/v1/user/profile 和 PUT /api/v1/user/profile：读取和更新画像。
+2. POST /api/v1/user/medical-report：接受文件上传，保存至 ./uploads 目录，异步调用阿里云百炼多模态模型（qwen-vl-plus）提取体检指标。提取结果写入 user_profiles.medical_reports 字段。
+
+【第六阶段：称重数据上报与查询】
+1. POST /api/v1/weigh-in：接收JSON格式称重数据，校验后写入 weigh_records 分区表。
+2. GET /api/v1/records：查询历史记录，支持page、page_size、start_date、end_date。对于1个月内的数据查原始表，超过1个月自动路由到日度汇总（从 user_analysis_summaries 查 summary_type='daily'）。
+
+【第七阶段：营养摘要与定时任务】
+1. 周报生成逻辑：查询过去7天 weigh_records 或 daily 汇总，计算日均热量和营养素、供能比例、高频食材Top3。存储为 summary_type='weekly', source='auto'。
+2. 使用 robfig/cron/v3，每周一 08:00 生成周报并触发 RAG 建议。
+3. POST /api/v1/summaries/generate?type=weekly：手动生成，source='manual'。
+4. GET /api/v1/summaries?type=weekly&date=2026-05-04：返回摘要列表。
+
+【第八阶段：RAG实现与AI建议生成】
+1. 文本向量化：调用阿里云百炼 text-embedding-v2 API，返回 []float64（1536维）。
+2. 摘要生成后自动向量化：将insights转为自然语言文本，获取embedding，写入 user_health_embeddings。
+3. 检索函数：生成查询向量，在 user_health_embeddings 中按余弦相似度检索Top5，过滤 user_id 和时间范围。
+4. POST /api/v1/health-advice/generate：构建Prompt（系统提示+当前摘要+历史参考），调用阿里云百炼 qwen-plus 生成约100字建议，存储到 health_advice_records。
+5. GET /api/v1/health-advice/latest?type=weekly：获取最新建议。
+
+【第九阶段：数据分层归档实现】
+每日凌晨执行归档任务：
+- 原始记录超过1个月：聚合为日度汇总，存入 summaries 表 (type='daily')，删除对应原始分区。
+- 日度汇总超过3个月：聚合为周度摘要 (type='weekly')。
+- 周度摘要超过1年：聚合为月度摘要 (type='monthly')。
+- 月度摘要超过3年：聚合为年度摘要 (type='yearly')。
+- 年度摘要长期保存。
+聚合时生成对应向量嵌入。
+
+【第十阶段：前端页面开发】
+原生 HTML/CSS/JS，放在 frontend/ 目录：
+
+1. 登录页：手机号、密码、登录按钮，存储JWT到localStorage。
+2. 仪表盘：展示最近7天热量趋势图（Chart.js CDN），本周AI建议摘要，点击展开全文。不展示体重数据（智能秤本身不测量人体体重，用户体重在个人资料中手动填写）。
+3. 个人资料页：编辑画像，上传体检报告，查看解析结果。
+4. 历史记录页：日期筛选，表格展示记录。超过1个月自动显示日度汇总。
+5. 营养报告页：选择粒度和日期，查看摘要和AI建议。
+6. 食物数据库页：查看系统支持的食材营养信息。
+
+【第十一阶段：测试数据生成脚本】
+scripts/ 目录下编写 Go 工具，生成7年测试数据：
+- 3个虚拟用户，设定体重变化曲线和热量目标。
+- 每周调用LLM生成21餐，转换为称重记录。
+- 模拟触发周报生成、归档、RAG建议。
+- 输出进度日志，支持API限流控制。
+
+【第十二阶段：部署与运行】
+1. 编译后端：go build -o server ./cmd/server。
+2. systemd 服务文件，开机自启，日志到文件。
+3. Nginx 反向代理，80端口转发到8080，提供前端静态文件服务。
+4. 可选 docker-compose.yml，包含PostgreSQL和后端。
+5. README.md 含环境要求、配置说明、启动步骤。
+
+【关键细节】
+- 统一响应格式：{"code":0,"message":"success","data":...}。
+- 日志使用 logrus。
+- 密码bcrypt加密，JWT密钥随机生成，文件上传限制类型和大小，SQL参数化查询。
+- 核心逻辑编写单元测试。
+
+【执行顺序】
+按阶段逐步完成，每阶段输出验证命令和预期结果，最后提供整体测试流程。
+
+请开始第一阶段的工作。
+```多模态调用 qwen3.6-flash用于体检报告解析。文本生成调用 qwen3.6-plus；注意是新云端，第一步是让他明白意图后下好需要的依赖或环境
+已按你的要求生成完整的 requirements.md 文件，并特别更新了阿里云百炼的模型名称：多模态使用 qwen-vl-flash（对应 qwen3.6-flash），文本生成使用 qwen-plus（对应 qwen3.6-plus）。向量嵌入仍用 text-embedding-v2。
+
+以下为文件内容，可直接保存为 requirements.md 用于指导 Trae 或你自己在腾讯云服务器上配置环境。
+
+智能饮食健康秤 - 环境与依赖要求
+本文件列出项目从零开始在腾讯云轻量服务器上运行所需的全部系统依赖、Go 模块、阿里云百炼 API 调用模型及简要配置说明。
+
+1. 系统依赖
+在 Ubuntu/Debian 服务器上执行：
+
+bash
+# 更新包列表
+sudo apt update && sudo apt upgrade -y
+
+# PostgreSQL 16 + pgvector
+sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+sudo apt update
+sudo apt install postgresql-16 postgresql-16-pgvector postgresql-contrib -y
+
+# Go 1.22（如未安装）
+wget https://go.dev/dl/go1.22.10.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.22.10.linux-amd64.tar.gz
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Nginx（用于反向代理与静态文件）
+sudo apt install nginx -y
+
+# Git
+sudo apt install git -y
+
+# 工具
+sudo apt install curl wget build-essential -y
+2. PostgreSQL 数据库初始化
+bash
+# 启动并设置开机自启
+sudo systemctl enable postgresql
+sudo systemctl start postgresql
+
+# 创建用户和数据库
+sudo -u postgres psql -c "CREATE USER scaleuser WITH PASSWORD 'your_strong_password';"
+sudo -u postgres psql -c "CREATE DATABASE smart_scale OWNER scaleuser;"
+sudo -u postgres psql -d smart_scale -c "CREATE EXTENSION vector;"
+请将 your_strong_password 替换为实际密码，并在项目配置文件中对应设置。
+
+3. Go 模块依赖 (go.mod)
+项目初始化：
+
+bash
+mkdir smart-scale-backend && cd smart-scale-backend
+go mod init smart-scale-backend
+安装核心依赖：
+
+bash
+# Web框架
+go get github.com/gin-gonic/gin
+
+# PostgreSQL驱动（推荐pgx，原生支持pgvector）
+go get github.com/jackc/pgx/v5
+
+# pgvector Go 客户端
+go get github.com/pgvector/pgvector-go
+
+# JWT
+go get github.com/golang-jwt/jwt/v5
+
+# 密码加密
+go get golang.org/x/crypto
+
+# 配置管理
+go get github.com/spf13/viper
+
+# 日志
+go get github.com/sirupsen/logrus
+
+# 定时任务
+go get github.com/robfig/cron/v3
+
+# 清理未使用的依赖
+go mod tidy
+注意：本项目直接使用 net/http 调用阿里云百炼 REST API，无需额外安装阿里云 SDK，减少依赖体积。
+
+4. 阿里云百炼 API 模型配置
+项目锁定使用阿里云百炼平台，以下为各功能对应的模型及 API 端点。
+
+4.1 认证方式
+在 阿里云百炼控制台 创建 API Key。
+
+所有请求在 Header 中携带 Authorization: Bearer <your-api-key>。
+
+4.2 模型调用详情
+功能	模型名称（控制台标识）	实际调用模型	API 端点	说明
+文本生成	qwen3.6-plus	qwen-plus	POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation	用于健康建议生成
+多模态解析	qwen3.6-flash	qwen-vl-flash	POST https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation	用于体检报告（图片/PDF）提取指标
+文本向量化	text-embedding-v2	text-embedding-v2	POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding	输出 1536 维向量
+关键参数：
+
+文本生成：parameters.result_format = "message"
+
+多模态：支持传入图片 URL 或 base64，可添加 system prompt 引导输出 JSON。
+
+向量化：model = "text-embedding-v2"，input 字段为文本列表。
+
+4.3 成本参考
+qwen-plus：约 0.8元/百万 token（输入），2元/百万 token（输出）
+
+qwen-vl-flash：按图片分辨率计费，极低
+
+text-embedding-v2：约 0.7元/百万 token
+
+学生项目使用量完全在免费额度或几元范围内。
+
+5. 前端依赖
+前端使用原生 HTML/CSS/JavaScript，不依赖任何框架和 npm。
+唯一外部资源为 Chart.js，通过 CDN 引入：
+
+html
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+所有页面位于 frontend/ 目录，由 Nginx 直接静态服务。
+
+6. 项目配置文件示例 (config.yaml)
+yaml
+server:
+  port: 8080
+  mode: release   # debug / release
+
+database:
+  host: 127.0.0.1
+  port: 5432
+  user: scaleuser
+  password: your_strong_password
+  dbname: smart_scale
+  sslmode: disable
+
+jwt:
+  secret: a-random-secret-string-change-me
+  expire_hours: 24
+
+aliyun:
+  api_key: sk-xxxxxxxxxxxxxx
+  text_model: qwen-plus
+  vl_model: qwen-vl-flash
+  embedding_model: text-embedding-v2
+
+upload:
+  path: ./uploads
+  max_size_mb: 10
+7. 环境验证检查清单
+部署完成后，依次验证：
+
+PostgreSQL 可正常连接，vector 扩展存在：
+psql -U scaleuser -d smart_scale -c "SELECT * FROM pg_extension WHERE extname='vector';"
+
+Go 版本 ≥ 1.22：go version
+
+项目可编译：go build ./...
+
+阿里云 API Key 可用（简单 curl 测试）：
+
+bash
+curl -X POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen-plus","input":{"messages":[{"role":"user","content":"你好"}]},"parameters":{"result_format":"message"}}'
+Nginx 运行正常，前端页面可访问。
+
+将此文件保存为 REQUIREMENTS.md，作为项目环境的权威依赖声明。下一步即可依据此文件在 Trae 或自行在服务器上执行环境搭建。
+
+The user wants me to summarize everything we've done today so they can copy it and continue in another directory. Let me create a comprehensive summary of all the work done.
+好的，以下是今天的完整工作总结：
+
+---
+
+## 智慧饮食项目 - 2026年6月4日工作总结
+
+### 一、服务器环境
+
+- **服务器**: 腾讯云 Ubuntu 22.04 (VM-0-17-ubuntu)
+- **项目**: 智慧饮食 (Smart Diet) — 基于 AI 向量搜索的个性化饮食推荐系统
+
+### 二、已安装环境组件
+
+| 组件 | 版本 | 状态 |
+|------|------|------|
+| Go | 1.26.4 | ✅ |
+| PostgreSQL | 16.14 | ✅ 运行中 |
+| pgvector | 0.7.4 | ✅ 已在 smart_diet_db 中启用 |
+| Nginx | 1.18.0 | ✅ active (running) |
+| DASHSCOPE_API_KEY | sk-07c88e8d2fe8470c934c19682c403467 | ✅ 已写入 ~/.bashrc |
+
+### 三、PostgreSQL 配置
+
+- **用户**: postgres
+- **密码**: 321738392
+- **数据库**: smart_diet_db
+- **主机**: localhost:5432
+- **连接命令**: `psql -h localhost -U postgres -d smart_diet_db`
+- **pgvector 扩展**: 已执行 `CREATE EXTENSION vector;`
+
+### 四、已创建的项目文件
+
+以下文件位于 `/home/ubuntu/CodeBuddy/20260604142927/`：
+
+**1. `.env`** — 环境变量配置
+```
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=321738392
+DB_NAME=smart_diet_db
+DB_SSLMODE=disable
+SERVER_PORT=8080
+GIN_MODE=debug
+DASHSCOPE_API_KEY=sk-07c88e8d2fe8470c934c19682c403467
+```
+
+**2. `.gitignore`** — Git 忽略规则
+
+**3. `README.md`** — 项目说明文档
+
+**4. `Makefile`** — 构建/运行/迁移命令
+
+**5. `go.mod`** — Go 模块定义
+```
+module smart-diet
+go 1.22
+```
+
+**6. `migrations/001_init.sql`** — 数据库初始化脚本，包含以下表：
+- `users` — 用户表（含身高体重活动量健康目标等）
+- `foods` — 食物库（营养成分/100g）
+- `food_embeddings` — 食物向量嵌入表（vector(1536)，用于 DashScope embedding）
+- `meal_records` — 饮食记录表
+- `meal_items` — 饮食记录明细表
+- `nutrition_goals` — 营养目标表
+- `recommendation_logs` — AI 推荐历史表
+- `updated_at` 自动更新触发器
+
+**7. `internal/config/config.go`** — 配置加载模块（读取 .env，提供 DSN 构造）
+
+### 五、未完成的文件（写了一半被中断）
+
+**8. `internal/database/db.go`** — 数据库连接模块（写到一半，未完成）
+- 已定义 Vector 自定义类型
+- 已写 Connect/Close 函数框架
+- 需要补充完整的 pgx 连接、vector 类型注册、错误处理
+
+### 六、尚未创建的文件
+
+- `cmd/server/main.go` — 程序入口
+- `internal/model/` — 数据模型（User, Food, MealRecord 等）
+- `internal/handler/` — HTTP 处理器
+- `internal/service/` — 业务逻辑层
+- `internal/repository/` — 数据访问层
+- `internal/router/` — Gin 路由
+- `pkg/dashscope/` — DashScope AI API 封装
+
+### 七、开发计划（12阶段）
+
+1. ✅ 环境搭建
+2. 🔨 项目初始化 & 数据库设计（进行中）
+3. 用户注册/登录（JWT）
+4. 食物库 CRUD
+5. 饮食记录功能
+6. DashScope AI 接入
+7. 向量嵌入 & 语义搜索
+8. AI 饮食推荐
+9. 营养分析统计
+10. Nginx 反向代理部署
+11. 测试 & 优化
+12. 上线
+
+### 八、注意事项
+
+- 腾讯云防火墙需开放 TCP 80 端口才能外网访问 Nginx
+- pgvector 的 IVFFlat 索引建议数据量达到一定规模后再创建
+- DashScope embedding 模型维度为 1536
+- APT 安装时 needrestart 提示按 `q` 跳过，服务重启选 `11`（none）
+
+---
+在lskj目录里继续完成整个项目，注意该项目分成go语言后端和python的rag服务两大模块，python环境还没装。
+
+在智能饮食健康管理助手项目中，嵌入式端承担着最贴近用户的感知与交互任务，是整个系统的“眼睛”和“前台”。
+具体来说，嵌入式端围绕一块 ESP32-P4 芯片展开，它需要完成从物理世界采集数据、在本地运行轻量级 AI 模型、与用户交互，
+再到将结果上报云端等一系列工作，核心目标是在不依赖网络的情况下实时分析食物，同时兼顾低功耗与响应速度。
+
+首先，嵌入式端通过摄像头持续采集餐盘的图像。摄像头通常采用 MIPI-CSI 接口与 ESP32-P4 连接，拍摄角度固定，
+能够清晰捕获食材摆放区域。每一帧图像会被送入已经在端侧部署好的 YOLO11n 模型——这是一个经过量化的、
+大小仅几兆字节的超轻量目标检测网络。模型会在本地完成推理，输出类别标签和置信度。
+由于推理过程完全在芯片内部的神经网络加速器或 CPU 上运行，不依赖云端，所以响应速度可以控制在数秒内。
+YOLO11n 的输出结果主要包括：发现了哪几种食材、每种食材的位置和大致的尺寸（通过边界框面积估算），
+并能够统计每种食材的数量。例如，它可以在一个餐盘里同时框出两块鸡胸肉、几朵西兰花和数片胡萝卜。
+
+除了视觉信息，嵌入式端还连接了一个或多个压力传感器，通常安装在餐盘下方或餐具底部。当用户开始用餐时，
+压力传感器会连续测量餐盘整体的重量变化。通过记录进食前后的重量差值，系统可以较为精确地获取每种食材被吃掉的实际重量。
+由于 YOLO 模型只能给出食材种类和数量，无法知道具体克数，压力传感器就起到了“秤”的作用。每次重力传感器数值发生变化就会拍一次照，
+这样在食物一个一个放上去的过程中就可以通过对比秤的数值和yolo识别结果来得知每个食物分别重多少克
+
+下一步是营养计算，这也是第二个端侧 AI 的工作。用户在使用时，
+会通过屏幕上的按键或语音（如果集成了简单的语音识别模块）输入他们即将采用的烹饪方式，例如爆炒、清蒸、红烧、油炸等。
+然后，嵌入式端将 YOLO 识别出的食材种类、压力传感器得到的食材重量以及用户选择的烹饪方式一起输入到第二个轻量级模型中。
+这个模型是预先训练好的 LightGBM 树模型（通过代码生成的方式内嵌在 ESP32-P4 中），
+它的任务是输出这顿饭烹饪后的预估总热量、蛋白质、脂肪、碳水化合物等营养信息（11项）
+但有时候有些数据会因为原始数据表的缺少或其他原因导致数值为0，数值为零的一律在前端不显示。
+这一步的关键在于模型在训练时已经学习了不同烹饪方式对营养变化的影响（例如油炸会显著增加热量和脂肪，
+水煮会损失部分钾和维生素 C）。模型推理的时间很短，通常在几十毫秒内完成，
+因此用户可以很快在屏幕上看到“这一餐吃完后大概会摄入多少热量”这样的反馈。
+
+为了让用户直观地看到结果，嵌入式端还需要驱动一块显示屏（通常是 MIPI-DSI 接口的彩色 LCD）。
+屏幕上会显示：摄像头实时画面（可选）、识别出的食材清单、估算的重量、选择的烹饪方式，
+以及最终计算出的总热量、蛋白质等数据。
+用户也可以通过触摸屏（如果是触摸屏）来修正烹饪方式或手动调整重量。
+
+最后，嵌入式端负责与云端或后端服务器通信。它通过外接的 Wi-Fi 模块（例如 ESP32-C6）将每餐的识别结果
+（食材、重量、烹饪方式、营养值）以及用户的身份信息打包，通过 HTTP 协议发送到 Go 后端。
+同时，它也可以接收后端下发的长期健康规划摘要（例如“本周建议控制每日总热量在 1800 千卡以内”），并在屏幕上显示，
+提醒用户。如果网络不稳定，嵌入式端可以暂时将数据存储在本地 Flash 或 PSRAM 中，待网络恢复后再补传。
+
+总的来说，嵌入式端在项目中既是数据采集者（摄像头、压力传感器），又是本地 AI 推理的执行者（YOLO 检测 + 营养估算），
+还是人机交互的终端（屏幕显示、按键/语音输入）。
+它把重计算的云端任务（如长期规划、体检报告分析）与实时性、隐私性要求高的前端任务（食材识别、即时营养计算）清晰地分离开，
+
+
+智能饮食健康管理助手 — 项目技术说明
+============================================
+
+一、系统架构概述
+----------------
+
+本项目是一个端侧智能饮食管理系统，核心计算全部在嵌入式设备本地完成，不依赖云端推理。
+系统以 ESP32-P4 芯片为中心，集成摄像头、压力传感器、显示屏和 Wi-Fi 通信模块，
+实现从食物识别到营养估算的全链路本地化处理。
+
+云端后端（Go 语言）仅负责长期数据存储、健康趋势分析和规划建议下发，
+不参与任何实时推理或营养计算。即使网络断开，嵌入式端仍可独立完成全部核心功能。
+
+
+二、硬件组成
+------------
+
+| 组件              | 型号/接口          | 作用                                       |
+|-------------------|--------------------|-------------------------------------------|
+| 主控芯片          | ESP32-P4           | 运行两个 AI 模型、驱动外设、管理通信       |
+| 摄像头            | MIPI-CSI 接口      | 采集餐盘图像，供 YOLO 检测食材             |
+| 压力传感器（多个）| 安装于餐盘下方     | 实时测量餐盘重量变化，精确获取食材克数     |
+| 显示屏            | MIPI-DSI 接口 LCD  | 显示识别结果、营养数据、用户交互界面       |
+| Wi-Fi 模块        | ESP32-C6（外接）   | 与云端后端 HTTP 通信，上报数据/接收建议    |
+| 触控/按键         | 触摸屏或物理按键   | 用户选择烹饪方式、修正识别结果             |
+
+
+三、端侧处理全流程（核心）
+--------------------------
+
+整个流程分为五个阶段，全部在 ESP32-P4 上完成：
+
+【阶段1】图像采集与食材识别
+
+  - 摄像头持续采集餐盘图像
+  - 图像送入端侧部署的 YOLO11n 模型（量化后仅几 MB）
+  - YOLO 在本地完成推理，输出：
+    · 食材类别（对应 final.json 中的 31 种食材）
+    · 每种食材的位置（边界框）
+    · 每种食材的数量（通过边界框计数）
+  - 推理完全在芯片内运行，不依赖网络，响应时间数秒内
+
+【阶段2】重量获取（压力传感器 + 摄像联动）
+
+  - 压力传感器连续测量餐盘总重量
+  - 每次传感器数值发生变化（即用户放入新食材），自动触发一次拍照
+  - 通过对比前后两次重量差值与 YOLO 识别结果，精确推算每种食材的克数
+  - 举例：餐盘原重 200g，放入一块鸡肉后变为 380g，YOLO 识别出鸡肉，
+    则鸡肉重量 = 380 - 200 = 180g
+  - 此机制解决了 YOLO 只能识别种类和数量、无法给出克数的问题
+
+【阶段3】用户输入烹饪方式
+
+  - 用户通过屏幕按键或语音选择烹饪方式
+  - 可选的 7 种烹饪方式：
+
+    | 编码 | 英文键名   | 中文     |
+    |------|-----------|----------|
+    | 0    | boil      | 煮       |
+    | 1    | braise    | 红烧/炖  |
+    | 2    | deep_fry  | 炸       |
+    | 3    | pan_fry   | 煎       |
+    | 4    | roast     | 烤       |
+    | 5    | steam     | 蒸       |
+    | 6    | stir_fry  | 炒       |
+
+【阶段4】本地营养预测（LightGBM 模型）
+
+  - 将食材种类、重量、烹饪方式组合为 41 维特征向量（见第五节）
+  - 送入 11 个独立的 LightGBM 树模型（已通过代码生成内嵌于 ESP32-P4）
+  - 模型输出 11 项烹饪后营养数据（见第六节）
+  - 推理耗时几十毫秒，用户几乎无感知
+  - 执行后处理（见第七节），确保物理合理性
+
+【阶段5】结果展示与数据上报
+
+  - 显示屏实时展示：
+    · 识别出的食材清单及重量
+    · 用户选择的烹饪方式
+    · 11 项营养预测值（数值为 0 的项目不显示）
+  - 同时将结果通过 Wi-Fi 上报云端（见第九节）
+  - 网络中断时暂存本地 Flash/PSRAM，恢复后补传
+
+
+四、食材数据库（final.json）
+-----------------------------
+
+final.json 是内嵌于嵌入式端的食材营养参考表，包含 31 种食材每 100g 可食部的完整营养数据。
+模型推理时直接使用此表中的食材索引，不需要在运行时读取 JSON 文件。
+
+31 种食材完整列表：
+
+| ID | 英文键名     | 中文名 | 分类     | 可食部比例 |
+|----|-------------|--------|----------|-----------|
+| 0  | apple       | 苹果   | 水果     | 0.76      |
+| 1  | banana      | 香蕉   | 水果     | 0.59      |
+| 2  | beef        | 牛肉   | 肉类     | 0.99      |
+| 3  | bell_pepper | 甜椒   | 蔬菜     | 0.83      |
+| 4  | cabbage     | 卷心菜 | 蔬菜     | 0.86      |
+| 5  | carrot      | 胡萝卜 | 蔬菜     | 0.96      |
+| 6  | cauliflower | 花菜   | 蔬菜     | 0.82      |
+| 7  | chicken     | 鸡肉   | 肉类     | 0.66      |
+| 8  | cucumber    | 黄瓜   | 蔬菜     | 0.92      |
+| 9  | egg         | 鸡蛋   | 蛋类     | 0.88      |
+| 10 | eggplant    | 茄子   | 蔬菜     | 0.93      |
+| 11 | fish        | 鱼肉   | 肉类     | 0.83      |
+| 12 | garlic      | 大蒜   | 香辛料   | 0.85      |
+| 13 | ginger      | 生姜   | 香辛料   | 0.95      |
+| 14 | grape       | 葡萄   | 水果     | 0.86      |
+| 15 | kiwi        | 猕猴桃 | 水果     | 0.83      |
+| 16 | kumquat     | 金橘   | 水果     | 0.89      |
+| 17 | lemon       | 柠檬   | 水果     | 0.66      |
+| 18 | onion       | 洋葱   | 蔬菜     | 0.90      |
+| 19 | orange      | 柑橘   | 水果     | 0.77      |
+| 20 | peach       | 桃     | 水果     | 0.86      |
+| 21 | pepper      | 胡椒   | 香辛料   | 0.88      |
+| 22 | pineapple   | 菠萝   | 水果     | 0.68      |
+| 23 | pork        | 猪肉   | 肉类     | 1.00      |
+| 24 | potato      | 马铃薯 | 蔬菜     | 0.94      |
+| 25 | shrimp      | 虾     | 肉类     | 0.67      |
+| 26 | small_pepper| 小米椒 | 蔬菜     | 0.80      |
+| 27 | strawberry  | 草莓   | 水果     | 0.97      |
+| 28 | tofu        | 豆腐   | 豆制品   | 1.00      |
+| 29 | tomato      | 番茄   | 蔬菜     | 0.97      |
+| 30 | watermelon  | 西瓜   | 水果     | 0.56      |
+
+食材分类（用于模型特征构建）：
+  水果类（11种）：apple, banana, grape, kiwi, kumquat, lemon, orange, peach, pineapple, strawberry, watermelon
+  肉类（5种）：beef, chicken, pork, shrimp, fish
+  香辛料（3种）：pepper, garlic, ginger
+
+每个食材包含 23 项营养字段：
+  zh_name, basis_per, edible_ratio, energy_kj, energy_kcal, water_g,
+  protein_g, fat_g, cholesterol_mg, ash_g, carbohydrate_g,
+  carotene_ug, thiamin_mg, riboflavin_mg, niacin_mg, vitamin_c_mg,
+  calcium_mg, phosphorus_mg, potassium_mg, sodium_mg, magnesium_mg,
+  iron_mg, zinc_mg, selenium_ug, copper_mg, manganese_mg
+
+
+五、模型输入：41 维特征向量构建规则
+------------------------------------
+
+嵌入式端必须按以下顺序构建 41 维 float 数组，作为 11 个模型的共同输入：
+
+| 索引  | 字段名              | 类型  | 填充规则                              |
+|-------|--------------------|-------|---------------------------------------|
+| 0~30  | ing_食材英文名      | float | 对应食材 one-hot 填 1.0，其余 0.0     |
+| 31    | raw_weight_1        | float | 第 1 种食材重量(g)                    |
+| 32    | raw_weight_2        | float | 第 2 种食材重量(g)，无则 0.0          |
+| 33    | raw_weight_3        | float | 第 3 种食材重量(g)，无则 0.0          |
+| 34    | raw_weight_4        | float | 第 4 种食材重量(g)，无则 0.0          |
+| 35    | raw_weight_total    | float | 所有食材重量之和                      |
+| 36    | raw_weight_mean     | float | raw_weight_total / 食材数量           |
+| 37    | n_ingredients       | float | 食材数量 (1~4)                        |
+| 38    | has_fruit           | float | 食材中含水果则 1.0，否则 0.0          |
+| 39    | has_meat            | float | 食材中含肉类则 1.0，否则 0.0          |
+| 40    | cooking_method_enc  | float | 烹饪方式编码 (0~6，见第三节阶段3)     |
+
+食材数量上限：4 种（raw_weight_1~4 只有 4 个位置）
+
+重量输入注意事项：
+  - 普通食材：50~500g
+  - 香辛料特殊范围：pepper 0.5~5g，garlic/ginger 5~30g
+  - 重量单位均为克(g)，指食材的毛重（未经可食部比例折算）
+
+
+六、模型输出：11 项烹饪后营养数据
+----------------------------------
+
+| 索引 | 输出字段                   | 单位  | 说明           |
+|------|---------------------------|-------|----------------|
+| 0    | cooked_weight_g           | g     | 烹饪后总重量   |
+| 1    | cooked_energy_kcal        | kcal  | 烹饪后热量     |
+| 2    | cooked_protein_g          | g     | 烹饪后蛋白质   |
+| 3    | cooked_fat_g              | g     | 烹饪后脂肪     |
+| 4    | cooked_carbohydrate_g     | g     | 烹饪后碳水化合物|
+| 5    | cooked_sodium_mg          | mg    | 烹饪后钠       |
+| 6    | cooked_cholesterol_mg     | mg    | 烹饪后胆固醇   |
+| 7    | cooked_vitamin_c_mg       | mg    | 烹饪后维生素C  |
+| 8    | cooked_calcium_mg         | mg    | 烹饪后钙       |
+| 9    | cooked_iron_mg            | mg    | 烹饪后铁       |
+| 10   | cooked_potassium_mg       | mg    | 烹饪后钾       |
+
+前端显示规则：数值为 0 的项目一律不显示。
+
+
+七、后处理规则（模型推理后必须执行）
+--------------------------------------
+
+11 个模型独立预测，可能出现物理不合理的结果。推理后必须执行以下修正：
+
+【规则1】所有输出裁剪非负
+
+  所有 11 个输出值，小于 0 的一律取 0。
+  原因：回归模型在训练稀疏区域可能输出微小负值（如脂肪 -0.2g），
+  这不代表"有负数的营养"，而是模型判断"接近零"时数学上轻微越界，
+  裁剪到零是最接近真值的合理估计。
+
+  C 代码：
+    for (int i = 0; i < 11; i++) {
+        if (results[i] < 0.0f) results[i] = 0.0f;
+    }
+
+【规则2】能量用 Atwater 公式重算（覆盖模型输出）
+
+  energy_kcal = 4 * protein_g + 9 * fat_g + 4 * carbohydrate_g
+
+  此步骤彻底消除三大营养素与热量之间的物理不一致，保证能量守恒。
+  不要直接使用模型输出的能量值。
+
+  C 代码：
+    results[1] = 4.0f * results[2] + 9.0f * results[3] + 4.0f * results[4];
+
+
+八、模型精度
+------------
+
+训练数据：50,000 条合成样本（Kevin 数据集）
+平均 R² = 0.9385
+
+| 目标           | R²     | MAPE  |
+|---------------|--------|-------|
+| 熟重           | 0.9973 | 4.1%  |
+| 钾             | 0.9788 | 7.3%  |
+| 碳水化合物     | 0.9518 | 13.8% |
+| 热量           | 0.9459 | 17.2% |
+| 钠             | 0.9430 | 27.3% |
+| 铁             | 0.9376 | 12.8% |
+| 脂肪           | 0.9299 | 27.8% |
+| 蛋白质         | 0.9252 | 18.2% |
+| 钙             | 0.9170 | 19.8% |
+| 胆固醇         | 0.9072 | 33.7% |
+| 维生素C        | 0.8898 | 35.7% |
+
+
+九、与云端后端的通信
+---------------------
+
+嵌入式端通过外接 ESP32-C6 Wi-Fi 模块，以 HTTP 协议与 Go 后端通信。
+
+【上行】嵌入式 → 云端
+
+  每餐结束后，嵌入式端上报 JSON 数据，格式：
+
+  {
+    "user_id": "设备唯一标识",
+    "timestamp": "2026-06-04T19:00:00+08:00",
+    "ingredients": ["chicken", "carrot", "potato"],
+    "raw_weights_g": [200.0, 80.5, 150.0],
+    "cooking_method": "braise",
+    "nutrition": {
+      "cooked_weight_g": 389.6,
+      "cooked_energy_kcal": 452.3,
+      "cooked_protein_g": 40.2,
+      "cooked_fat_g": 12.5,
+      "cooked_carbohydrate_g": 33.1,
+      "cooked_sodium_mg": 1240.0,
+      "cooked_cholesterol_mg": 106.0,
+      "cooked_vitamin_c_mg": 8.4,
+      "cooked_calcium_mg": 56.0,
+      "cooked_iron_mg": 3.8,
+      "cooked_potassium_mg": 712.0
+    }
+  }
+
+  字段说明：
+  - ingredients: 字符串数组，1~4 个食材，必须是 final.json 中 31 种食材的英文键名
+  - raw_weights_g: 浮点数数组，与 ingredients 一一对应，单位克(g)
+  - cooking_method: 字符串，7 种烹饪方式之一的英文键名
+  - nutrition: 11 项营养预测值（已执行后处理）
+
+【下行】云端 → 嵌入式
+
+  后端下发长期健康规划摘要，例如：
+  - "本周建议控制每日总热量在 1800 千卡以内"
+  - "近7天平均蛋白质摄入偏低，建议增加肉蛋类"
+  - 网络不稳定时，数据暂存本地 Flash/PSRAM，恢复后自动补传
+
+
+十、端云职责划分
+-----------------
+
+| 职责                     | 执行方    | 说明                                      |
+|--------------------------|----------|-------------------------------------------|
+| 食材图像识别（YOLO）     | 嵌入式端 | 本地推理，实时响应                        |
+| 食材重量获取             | 嵌入式端 | 压力传感器 + 摄像联动                     |
+| 烹饪方式输入             | 嵌入式端 | 用户通过按键/语音/触摸选择                |
+| 营养预测（LightGBM）     | 嵌入式端 | 11 个模型本地推理，几十毫秒完成           |
+| 后处理（裁剪+Atwater）   | 嵌入式端 | 保证物理合理性                            |
+| 结果展示                 | 嵌入式端 | LCD 屏显示，数值为 0 不显示               |
+| 每餐数据上报             | 嵌入式端 | HTTP 上传，断网暂存                       |
+| 长期数据存储             | 云端     | 历史餐食记录、营养趋势                    |
+| 健康规划与分析           | 云端     | 体检报告分析、长期饮食建议                |
+| 规划建议下发             | 云端     | 推送摘要到嵌入式端显示                    |
+
+核心原则：实时性要求高的任务（识别、称重、营养计算）全部在端侧完成，
+云端只做非实时的长期分析与规划，系统在断网时仍可正常使用。
+
