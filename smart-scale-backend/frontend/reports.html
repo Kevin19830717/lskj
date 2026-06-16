@@ -4,22 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能饮食健康秤 - 营养报告</title>
-    <link rel="stylesheet" href="css/style-v15.css">
+    <link rel="stylesheet" href="/css/style-v15.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body data-theme="reports">
     <nav class="sidebar">
         <div class="sidebar-header"><span class="logo-icon">🥗</span><h2>智能饮食秤</h2></div>
         <ul class="nav-menu">
-            <li><a href="dashboard.html"><span>📊</span> 仪表盘</a></li>
-            <li><a href="records.html"><span>📝</span> 历史记录</a></li>
-            <li class="active"><a href="reports.html"><span>📋</span> 营养报告</a></li>
-            <li><a href="foods.html"><span>🍽️</span> 食物库</a></li>
-            <li><a href="profile.html" id="profilePageLink"><span>👤</span> 个人中心</a></li>
+            <li><a href="/dashboard"><span>📊</span> 仪表盘</a></li>
+            <li><a href="/records"><span>📝</span> 历史记录</a></li>
+            <li class="active"><a href="/reports"><span>📋</span> 营养报告</a></li>
+            <li><a href="/foods"><span>🍽️</span> 食物库</a></li>
+            <li><a href="/profile" id="profilePageLink"><span>👤</span> 个人中心</a></li>
         </ul>
         <div class="sidebar-user-area" id="sidebarUserArea">
             <div class="sidebar-user-row">
-                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='profile.html'">
+                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='/profile'">
                     <span id="avatarLetter">?</span></div>
                 <div class="sidebar-logout-area">
                     <a href="javascript:void(0)" onclick="logout()" class="logout-btn-pill">退出登录</a>
@@ -64,7 +64,7 @@
         </div><!-- end main-panel -->
     </main>
 
-    <script src="js/app.js?v=13"></script>
+    <script src="/js/app.js?v=13"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             checkAuth(); loadSummaries();

@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -92,6 +94,25 @@ func Load(configPath string) (*Config, error) {
 		if err := v.Unmarshal(cfg); err != nil {
 			loadErr = fmt.Errorf("failed to unmarshal config: %w", err)
 			return
+		}
+
+		// 显式环境变量覆盖（Docker 部署用）
+		if h := os.Getenv("DATABASE_HOST"); h != "" {
+			cfg.Database.Host = h
+		}
+		if p := os.Getenv("DATABASE_PORT"); p != "" {
+			if pi, err := strconv.Atoi(p); err == nil {
+				cfg.Database.Port = pi
+			}
+		}
+		if u := os.Getenv("DATABASE_USER"); u != "" {
+			cfg.Database.User = u
+		}
+		if pw := os.Getenv("DATABASE_PASSWORD"); pw != "" {
+			cfg.Database.Password = pw
+		}
+		if db := os.Getenv("DATABASE_DBNAME"); db != "" {
+			cfg.Database.DBName = db
 		}
 	})
 

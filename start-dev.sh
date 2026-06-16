@@ -86,15 +86,40 @@ export GOPROXY=https://goproxy.cn,direct
 go build -o smart-scale-server cmd/server/main.go 2>&1 | tail -3
 echo -e "  ${GREEN}编译完成${NC}"
 
-# ---- 配置 Nginx (如果还没配好) ----
-echo -e "${YELLOW}[4/5] 检查 Nginx...${NC}"
-if [ ! -f /etc/nginx/sites-enabled/smart-scale.conf ]; then
-    cat > /tmp/smart-scale.conf << 'NGINX_EOF'
+# ---- 配置 Nginx (始终更新) ----
+echo -e "${YELLOW}[4/5] 配置 Nginx...${NC}"
+cat > /tmp/smart-scale.conf << 'NGINX_EOF'
 server {
     listen 80;
     server_name _;
-    root /home/ubuntu/lskj/smart-scale-backend/frontend;
+    root /home/ubuntu/lskj/smart-scale-backend/frontend-react/dist;
     index index.html;
+
+    # 旧版 HTML 页面从 legacy 目录提供（支持有无 .html 后缀）
+    location = /dashboard.html {
+        return 301 /dashboard;
+    }
+    location ~ ^/(records|reports|foods|profile)\.html$ {
+        root /home/ubuntu/lskj/smart-scale-backend/frontend;
+        try_files $uri =404;
+    }
+    location ~ ^/(records|reports|foods|profile)$ {
+        root /home/ubuntu/lskj/smart-scale-backend/frontend;
+        try_files $uri.html $uri.html/ =404;
+    }
+    location /css/ {
+        root /home/ubuntu/lskj/smart-scale-backend/frontend;
+        try_files $uri =404;
+    }
+    location /js/ {
+        root /home/ubuntu/lskj/smart-scale-backend/frontend;
+        try_files $uri =404;
+    }
+    location /images/ {
+        root /home/ubuntu/lskj/smart-scale-backend/frontend;
+        try_files $uri =404;
+    }
+
     location /api/ {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -119,14 +144,11 @@ server {
     }
 }
 NGINX_EOF
-    sudo cp /tmp/smart-scale.conf /etc/nginx/sites-available/smart-scale.conf
-    sudo ln -sf /etc/nginx/sites-available/smart-scale.conf /etc/nginx/sites-enabled/
-    sudo rm -f /etc/nginx/sites-enabled/default
-    sudo nginx -t && sudo systemctl reload nginx
-    echo -e "  ${GREEN}Nginx 已配置${NC}"
-else
-    echo -e "  ${GREEN}Nginx 已就绪${NC}"
-fi
+sudo cp /tmp/smart-scale.conf /etc/nginx/sites-available/smart-scale.conf
+sudo ln -sf /etc/nginx/sites-available/smart-scale.conf /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+echo -e "  ${GREEN}Nginx 已配置${NC}"
 
 # ---- 启动 Go 后端 (前台) ----
 echo -e "${GREEN}[5/5] 启动服务 (前台模式)...${NC}"

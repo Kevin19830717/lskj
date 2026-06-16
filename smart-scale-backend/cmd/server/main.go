@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -168,10 +169,14 @@ func setupRoutes(
 	protected.GET("/user/profile", userH.GetProfile)
 	protected.PUT("/user/profile", userH.UpdateProfile)
 	protected.POST("/user/medical-report", userH.UploadMedicalReport)
+	protected.GET("/user/stats", userH.GetUserStats)
+	protected.GET("/user/health-score", userH.GetHealthScore)
+	protected.POST("/user/avatar", userH.UpdateAvatar)
 
 	// 称重记录
 	protected.POST("/weigh-in", mealH.RecordWeighIn)
 	protected.GET("/records", mealH.GetHistoryRecords)
+	protected.GET("/daily-summary", mealH.GetDailySummary)
 
 	// 食物库
 	protected.POST("/foods", foodH.AddFood)
@@ -185,6 +190,7 @@ func setupRoutes(
 	// AI健康建议 (RAG)
 	protected.POST("/health-advice/generate", adviceH.GenerateAdvice)
 	protected.GET("/health-advice/latest", adviceH.GetLatestAdvice)
+	protected.GET("/health-advice", adviceH.ListAdvices)
 
 	// 仪表盘
 	protected.GET("/dashboard/stats", dashboardH.GetStats)
@@ -197,5 +203,25 @@ func setupRoutes(
 			"service": "smart-scale-backend",
 			"version": "1.0.0",
 		})
+	})
+
+	// 前端静态文件服务
+	r.Static("/uploads", "./uploads")
+	r.Static("/assets", "./frontend/assets")
+	r.Static("/frontend", "./frontend")
+
+	// SPA路由：所有非API、非静态文件的GET请求都返回index.html
+	r.NoRoute(func(c *gin.Context) {
+		// 只对GET请求且非API路径返回index.html
+		if c.Request.Method == "GET" && !strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.File("./frontend/index.html")
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+	})
+
+	// 首页也返回index.html
+	r.GET("/", func(c *gin.Context) {
+		c.File("./frontend/index.html")
 	})
 }

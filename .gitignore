@@ -13,3 +13,24 @@ ENV/
 *.tmp
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+*.exe
+*.out
+*.so
+*.dll
+/smart-scale-backend/server
+/smart-scale-backend/smart-scale-server
+/smart-scale-backend/frontend-react/dist
+/smart-scale-backend/frontend-react/node_modules
+
+# Node
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Large data files
+kapianshuju_fix.txt
+final.json
+Kevin.json
+my_doc/

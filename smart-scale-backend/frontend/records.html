@@ -4,21 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能饮食健康秤 - 历史记录</title>
-    <link rel="stylesheet" href="css/style-v15.css">
+    <link rel="stylesheet" href="/css/style-v15.css">
 </head>
 <body data-theme="records">
     <nav class="sidebar">
         <div class="sidebar-header"><span class="logo-icon">🥗</span><h2>智能饮食秤</h2></div>
         <ul class="nav-menu">
-            <li><a href="dashboard.html"><span>📊</span> 仪表盘</a></li>
-            <li class="active"><a href="records.html"><span>📝</span> 历史记录</a></li>
-            <li><a href="reports.html"><span>📋</span> 营养报告</a></li>
-            <li><a href="foods.html"><span>🍽️</span> 食物库</a></li>
-            <li><a href="profile.html" id="profilePageLink"><span>👤</span> 个人中心</a></li>
+            <li><a href="/dashboard"><span>📊</span> 仪表盘</a></li>
+            <li class="active"><a href="/records"><span>📝</span> 历史记录</a></li>
+            <li><a href="/reports"><span>📋</span> 营养报告</a></li>
+            <li><a href="/foods"><span>🍽️</span> 食物库</a></li>
+            <li><a href="/profile" id="profilePageLink"><span>👤</span> 个人中心</a></li>
         </ul>
         <div class="sidebar-user-area" id="sidebarUserArea">
             <div class="sidebar-user-row">
-                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='profile.html'">
+                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='/profile'">
                     <span id="avatarLetter">?</span></div>
                 <div class="sidebar-logout-area">
                     <a href="javascript:void(0)" onclick="logout()" class="logout-btn-pill">退出登录</a>
@@ -46,19 +46,19 @@
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th>#</th><th>时间</th><th>食材</th><th>重量(g)</th><th>烹饪方式</th>
+                        <th>时间</th><th>食材</th><th>重量(g)</th><th>烹饪方式</th>
                         <th>热量(kcal)</th><th>蛋白质(g)</th><th>脂肪(g)</th><th>碳水(g)</th>
                     </tr>
                 </thead>
                 <tbody id="recordsBody">
-                    <tr><td colspan="9" class="empty-text">加载中...</td></tr>
+                    <tr><td colspan="8" class="empty-text">加载中...</td></tr>
                 </tbody>
             </table>
         </section>
         </div><!-- end main-panel -->
     </main>
 
-    <script src="js/app.js?v=13"></script>
+    <script src="/js/app.js?v=13"></script>
     <script>
         let currentPage = 1, pageSize = 20;
 
@@ -85,18 +85,17 @@
         function renderTable(items) {
             const tbody = document.getElementById('recordsBody');
             if (!items.length) {
-                tbody.innerHTML = '<tr><td colspan="9" class="empty-text">暂无记录</td></tr>'; return;
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-text">暂无记录</td></tr>'; return;
             }
             tbody.innerHTML = items.map((r,i) => `
                 <tr>
-                    <td>${r.id}</td>
                     <td>${formatTime(r.created_at)}</td>
                     <td title="${r.ingredient_names?.join(', ') || r.ingredients.join(', ')}">${(r.ingredient_names||r.ingredients).join(', ')}</td>
                     <td>${(r.raw_weights_g||[]).map(w=>Math.round(w)).join('/')}</td>
                     <td>${r.cooking_method_label || r.cooking_method || '-'}</td>
                     <td>${r.cooked_energy_kcal != null ? Math.round(r.cooked_energy_kcal) : '-'}</td>
                     <td>${r.cooked_protein_g != null ? r.cooked_protein_g.toFixed(1) : '-'}</td>
-                    <td>${r.cooked_fat_g != null ? r.cooked_fat.toFixed(1) : '-'}</td>
+                    <td>${r.cooked_fat_g != null ? r.cooked_fat_g.toFixed(1) : '-'}</td>
                     <td>${r.cooked_carbohydrate_g != null ? r.cooked_carbohydrate_g.toFixed(1) : '-'}</td>
                 </tr>
             `).join('');

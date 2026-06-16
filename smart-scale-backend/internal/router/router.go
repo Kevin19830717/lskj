@@ -131,6 +131,7 @@ func (r *Router) registerRoutes() {
 
 	// 前端静态文件服务
 	r.engine.Static("/uploads", "./uploads")
+	r.engine.Static("/assets", "./frontend/assets")
 	r.engine.StaticFile("/", "./frontend/index.html")
 	r.engine.Static("/frontend", "./frontend")
 }

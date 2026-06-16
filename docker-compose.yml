@@ -27,12 +27,11 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: 321738392
-      DB_NAME: smart_scale
-      SERVER_PORT: 8080
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: 321738392
+      DATABASE_DBNAME: smart_scale
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
     volumes:
       - ./uploads:/app/uploads
@@ -62,7 +61,8 @@ services:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./smart-scale-backend/frontend:/usr/share/nginx/html:ro
+      - ./smart-scale-backend/frontend-react/dist:/usr/share/nginx/html:ro
+      - ./smart-scale-backend/frontend:/usr/share/nginx/html-legacy:ro
     depends_on:
       - backend
       - rag-service

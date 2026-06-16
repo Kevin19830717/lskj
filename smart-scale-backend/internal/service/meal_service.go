@@ -76,7 +76,7 @@ func (s *MealService) GetHistoryRecords(ctx context.Context, userID int, page, p
 	}
 
 	// 转换为响应格式
-	var responses []model.WeighRecordResponse
+	responses := make([]model.WeighRecordResponse, 0)
 	for _, rec := range records {
 		resp := model.WeighRecordResponse{
 			ID:                rec.ID,

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能饮食健康秤 - 食物库</title>
-    <link rel="stylesheet" href="css/style-v15.css">
+    <link rel="stylesheet" href="/css/style-v15.css">
     <style>
         /* 食物库增强样式 */
         .foods-grid {
@@ -15,7 +15,15 @@
             padding: 24px !important;
             cursor: pointer;
             border: 2px solid transparent !important;
-            transition: all 0.3s ease !important;
+            transition: opacity 0.5s ease, transform 0.5s ease !important;
+        }
+        .food-card.card-hidden {
+            opacity: 0 !important;
+            transform: translateY(30px) !important;
+        }
+        .food-card.card-reveal {
+            opacity: 1 !important;
+            transform: translateY(0) !important;
         }
         .food-card:hover {
             transform: translateY(-4px) !important;
@@ -107,15 +115,15 @@
     <nav class="sidebar">
         <div class="sidebar-header"><span class="logo-icon">🥗</span><h2>智能饮食秤</h2></div>
         <ul class="nav-menu">
-            <li><a href="dashboard.html"><span>📊</span> 仪表盘</a></li>
-            <li><a href="records.html"><span>📝</span> 历史记录</a></li>
-            <li><a href="reports.html"><span>📋</span> 营养报告</a></li>
-            <li class="active"><a href="foods.html"><span>🍽️</span> 食物库</a></li>
-            <li><a href="profile.html" id="profilePageLink"><span>👤</span> 个人中心</a></li>
+            <li><a href="/dashboard"><span>📊</span> 仪表盘</a></li>
+            <li><a href="/records"><span>📝</span> 历史记录</a></li>
+            <li><a href="/reports"><span>📋</span> 营养报告</a></li>
+            <li class="active"><a href="/foods"><span>🍽️</span> 食物库</a></li>
+            <li><a href="/profile" id="profilePageLink"><span>👤</span> 个人中心</a></li>
         </ul>
         <div class="sidebar-user-area" id="sidebarUserArea">
             <div class="sidebar-user-row">
-                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='profile.html'">
+                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='/profile'">
                     <span id="avatarLetter">?</span></div>
                 <div class="sidebar-logout-area">
                     <a href="javascript:void(0)" onclick="logout()" class="logout-btn-pill">退出登录</a>
@@ -158,7 +166,7 @@
         </div><!-- end main-panel -->
     </main>
 
-    <script src="js/app.js?v=13"></script>
+    <script src="/js/app.js?v=13"></script>
     <script>
         let allFoods = [];
         let currentCategory = 'all';
@@ -182,6 +190,9 @@
                 renderFoodCards(allFoods);
                 currentCategory = 'all';
                 updateCategoryUI();
+            }).catch(err => {
+                console.error('加载食物列表失败:', err);
+                document.getElementById('foodsGrid').innerHTML = '<p class="empty-text">加载食物数据失败，请刷新重试</p>';
             });
         }
 
@@ -227,8 +238,9 @@
                 currentCategory === 'all' ? `共 ${items.length} 种食物` :
                 `${categoryMap[currentCategory]||currentCategory}: ${items.length} 种食物`;
 
-            el.innerHTML = items.map(f => `
-                <div class="food-card" onclick="showFoodDetail(${f.id})">
+            // 渲染所有卡片（初始隐藏）
+            el.innerHTML = items.map((f, i) => `
+                <div class="food-card card-hidden" onclick="showFoodDetail(${f.id})" data-card-index="${i}">
                     <div class="food-card-header">
                         <div>
                             <h5>${f.name}<small>${f.name_en}</small></h5>
@@ -242,6 +254,17 @@
                         ${renderNutrientItem('🍚', '碳水', f.carbohydrate_g, 'g')}
                     </div>
                 </div>`).join('');
+
+            // 逐张卡片依次出现
+            requestAnimationFrame(() => {
+                const cards = el.querySelectorAll('.card-hidden');
+                cards.forEach((card, i) => {
+                    setTimeout(() => {
+                        card.classList.remove('card-hidden');
+                        card.classList.add('card-reveal');
+                    }, i * 80);
+                });
+            });
         }
 
         function renderNutrientItem(icon, label, val, unit) {

@@ -79,28 +79,80 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		LatestAdvice:   r.latestAdvice,
 	}
 
-	// 计算营养分布（从最近记录中汇总）
-	if len(r.topFoods) > 0 {
-		records, _ := h.mealService.GetRecentMeals(ctx, int(userID), min(50, days*5))
-		var totalP, totalF, totalC float64
-		for _, rec := range records {
-			if rec.CookedProteinG != nil {
-				totalP += *rec.CookedProteinG
-			}
-			if rec.CookedFatG != nil {
-				totalF += *rec.CookedFatG
-			}
-			if rec.CookedCarbohydrateG != nil {
-				totalC += *rec.CookedCarbohydrateG
+	// 计算营养分布及均值：取最近有数据的N天（不要求一定是近N个日历日）
+	records, _ := h.mealService.GetRecentMeals(ctx, int(userID), min(days*5, 50))
+	// dayTotals: key=日期字符串(YYYY-MM-DD), value=当日各营养素汇总
+	type dayNutrients struct {
+		Energy, Protein, Fat, Carb float64
+	}
+	dayTotals := make(map[string]*dayNutrients)
+	for _, rec := range records {
+		dateStr := rec.CreatedAt.Format("2006-01-02")
+		dn := dayTotals[dateStr]
+		if dn == nil {
+			dn = &dayNutrients{}
+			dayTotals[dateStr] = dn
+		}
+		if rec.CookedEnergyKcal != nil {
+			dn.Energy += *rec.CookedEnergyKcal
+		}
+		if rec.CookedProteinG != nil {
+			dn.Protein += *rec.CookedProteinG
+		}
+		if rec.CookedFatG != nil {
+			dn.Fat += *rec.CookedFatG
+		}
+		if rec.CookedCarbohydrateG != nil {
+			dn.Carb += *rec.CookedCarbohydrateG
+		}
+	}
+
+	// 只取最近N个有数据的天
+	actualDayCount := len(dayTotals)
+	if actualDayCount > days {
+		// 按日期排序，只保留最近days天
+		type kv struct {
+			date string
+			dn   *dayNutrients
+		}
+		var sorted []kv
+		for d, dn := range dayTotals {
+			sorted = append(sorted, kv{d, dn})
+		}
+		// 简单按日期降序排序
+		for i := 0; i < len(sorted); i++ {
+			for j := i + 1; j < len(sorted); j++ {
+				if sorted[j].date > sorted[i].date {
+					sorted[i], sorted[j] = sorted[j], sorted[i]
+				}
 			}
 		}
-		totalMacro := totalP + totalF + totalC
-		if totalMacro > 0 {
-			stats.NutrientDistribution = model.NutrientDist{
-				ProteinPct: math.Round(totalP/totalMacro*10000) / 100,
-				FatPct:     math.Round(totalF/totalMacro*10000) / 100,
-				CarbPct:    math.Round(totalC/totalMacro*10000) / 100,
-			}
+		// 重建 dayTotals，只保留前 days 天
+		dayTotals = make(map[string]*dayNutrients)
+		for i := 0; i < days && i < len(sorted); i++ {
+			dayTotals[sorted[i].date] = sorted[i].dn
+		}
+		actualDayCount = len(dayTotals)
+	}
+	var sumEnergy, sumP, sumF, sumC float64
+	if actualDayCount > 0 {
+		for _, dn := range dayTotals {
+			sumEnergy += dn.Energy
+			sumP += dn.Protein
+			sumF += dn.Fat
+			sumC += dn.Carb
+		}
+		stats.AvgDailyEnergy = math.Round(sumEnergy/float64(actualDayCount)*100) / 100
+		stats.TotalProtein = math.Round(sumP/float64(actualDayCount)*10) / 10
+		stats.TotalFat = math.Round(sumF/float64(actualDayCount)*10) / 10
+		stats.TotalCarb = math.Round(sumC/float64(actualDayCount)*10) / 10
+	}
+	totalMacro := sumP + sumF + sumC
+	if totalMacro > 0 {
+		stats.NutrientDistribution = model.NutrientDist{
+			ProteinPct: math.Round(sumP/totalMacro*10000) / 100,
+			FatPct:     math.Round(sumF/totalMacro*10000) / 100,
+			CarbPct:    math.Round(sumC/totalMacro*10000) / 100,
 		}
 	}
 

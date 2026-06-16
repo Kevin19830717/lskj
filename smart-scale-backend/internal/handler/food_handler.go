@@ -94,7 +94,7 @@ func (h *FoodHandler) ListFoods(c *gin.Context) {
 		}
 	}
 	if ps := c.Query("page_size"); ps != "" {
-		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 200 {
 			pageSize = v
 		}
 	}

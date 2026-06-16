@@ -20,6 +20,7 @@ from models.schemas import (
 from services.embedding_service import call_embedding_api
 from services.retrieval_service import similarity_search, store_embedding
 from services.generation_service import generate_text, generate_multimodal
+from config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

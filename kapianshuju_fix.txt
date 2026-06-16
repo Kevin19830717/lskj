@@ -1,0 +1,110 @@
+详细解释你对卡片数据显示异常问题解决的全过程
+
+23:12
+CodeBuddy
+深度思考
+好的，以下是仪表盘卡片数据异常问题的完整排查与修复全过程：
+
+问题现象
+用户反馈：仪表盘页面的统计卡全部显示 0 或 --，图表显示"暂无趋势数据"，且图表只有近4天数据，6月2日之前的记录全部丢失。
+
+排查过程（逐层深入）
+第1层：前端 → 后端 API 是否返回数据？
+查看 DashboardPage.tsx 的数据获取逻辑：
+
+typescript
+// 第422-424行：stats 卡片
+apiGet<DashboardStats>("/dashboard/stats").then((d) => {
+    if (d.code === 0 && d.data) setStats(d.data)
+})
+
+// 第235行：chart 图表
+apiGet<RecentMeal[]>(`/dashboard/recent-meals?limit=...`)
+前端逻辑本身没有问题 — 调API、判空、设状态都正常。问题一定在后端或数据层。
+
+第2层：后端 dashboard_handler.go — 发现严格日期截断
+打开后端 handler 源码，发现 关键 Bug：
+
+go
+// 原始代码存在硬编码的日期截止过滤
+cutoff := time.Now().AddDate(0, 0, -7)  // 只取最近7天！
+// ... 在查询结果中过滤掉 cutoff 之前的记录 ...
+根因：用户最后一条称重记录是 6月6日，而当前日期是 6月16日，相差10天。cutoff 截止到9天前，直接把所有有效数据全部过滤掉了。
+
+修复：删除日期截止逻辑，改为使用数据库中实际存在的所有数据，按日期排序后保留最近N条。
+
+同时清理了未使用的 "time" import（删掉 cutoff 代码但没删 import 会导致 Go 编译报错）。
+
+第3层：API 返回限制太低 — 数据被截断
+修复截止问题后重新测试，发现图表仍然只显示4天数据。继续追查：
+
+go
+// GetRecentMeals 函数原始默认值：
+limit = min(limit, 50)   // 最大只能请求50条！
+default limit = 10       // 默认才10条
+问题：即使前端传了更大的 limit，后端也强制 cap 到 50。而30天的趋势图可能需要上百条 meal 记录。
+
+修复：将 default 从 10→100，max 从 50→500：
+
+go
+if limit <= 0 { limit = 100 }    // 原: 10
+if limit > 500 { limit = 500 }   // 原: 50
+第4层：前端图表日期范围端点错误
+后端修好了，但前端 chart 组件还有问题。查看日期范围生成代码：
+
+typescript
+// 原始代码（错误）：
+const endDate = new Date()  // 用"今天"！
+for (let i = rangeDays - 1; i >= 0; i--) {
+  const dt = new Date(endDate)
+  dt.setDate(dt.getDate() - i)
+  dates.push(dt.toISOString().split("T")[0])
+}
+问题：如果用户最后一条数据是6月6日，今天却是6月16日，那么日期轴会从6月10日画到6月16日 — 但这10天里没有任何数据，全是零值柱子。而真正有数据的6月初那段反而不在范围内。
+
+修复：以最新数据日期为终点，而非今天：
+
+typescript
+const allDates = Object.keys(dayMap).sort()
+const latestDate = allDates.length > 0 
+  ? allDates[allDates.length - 1]   // 取实际最新数据日期
+  : new Date().toISOString().split("T")[0]
+
+// 以 latestDate 为基准往前推 rangeDays 天
+同时提高前端请求数据量上限：
+
+typescript
+// 原来：固定写死一个较小的数字
+// 修改后：动态计算，最多500条
+limit=${Math.min(rangeDays * 5, 500)}
+第5层：稀疏数据导致趋势计算失败
+数据终于能显示了，但趋势百分比仍显示"暂无"。分析原因：
+
+用户不是每天都称重，30天里可能只有4-5天有数据，其余25天都是 value=0。
+
+原始趋势算法：把所有天数一分为二算均值比较 — 大量零值把均值拉得极低，后半周期只要有一条非零数据就暴涨几万%，或者两边都是0导致除零错误。
+
+修复：趋势计算仅基于有数据的日期（nonZeroDays）：
+
+typescript
+const nonZeroDays = data.filter(d => d.value > 0)
+
+if (nonZeroDays.length >= 2) {
+  // 把 nonZeroDays 一分为二，分别求均值再比较
+  const nzMid = Math.floor(nonZeroDays.length / 2)
+  const firstHalfAvg = nonZeroDays.slice(0, nzMid).reduce(...) / nzMid
+  const secondHalfAvg = nonZeroDays.slice(nzMid).reduce(...) / (nonZeroDays.length - nzMid)
+  trendPct = ((secondHalfAvg - firstHalf) / firstHalf) * 100
+} else if (nonZeroDays.length === 1) {
+  trendPct = 0  // 仅1天数据时视为持平
+} else {
+  trendPct = null  // 无数据时显示"暂无"
+}
+修改文件汇总
+文件	改动
+dashboard_handler.go	删除7天日期截止；移除 unused time import；GetRecentMeals limit 10→100 / max 50→500
+DashboardPage.tsx	图表日期范围改用 latestDate；请求 limit 动态上限500；趋势用 nonZeroDays 计算
+最终效果
+4张统计卡：正确显示本周平均热量/蛋白质/脂肪/碳水
+图表：完整展示7/14/30天范围，以最新数据日期为终点
+趋势百分比：基于实际有数据的日子做前后半段对比，不再受零值干扰
