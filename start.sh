@@ -1,13 +1,6 @@
 #!/bin/bash
-set -e
-
 # ============================================================
 # 智能饮食健康秤 — 一键启动脚本
-# 用法: bash start.sh
-# 启动后访问:
-#   前端页面: http://106.53.198.194
-#   API文档:  http://106.53.198.194/api/v1/health
-#   RAG服务:  http://106.53.198.194:8001/docs
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -48,7 +41,7 @@ export UPLOAD_MAX_SIZE_MB=10
 # RAG 服务环境变量
 export DATABASE_URL=postgresql://postgres:321738392@localhost:5432/smart_scale
 export RAG_SERVER_PORT=8001
-export TEXT_MODEL=qwen-plus
+export TEXT_MODEL=qwen3.6-flash
 export VL_MODEL=qwen-vl-flash
 export EMBEDDING_MODEL=text-embedding-v2
 export SIMILARITY_THRESHOLD=0.3
@@ -72,8 +65,8 @@ fi
 echo "[4/6] 编译并启动 Go 后端 (:8080)..."
 cd "$BACKEND_DIR"
 export GOPROXY=https://goproxy.cn,direct
-go mod tidy 2>&1 | tail -5
-go build -o smart-scale-server cmd/server/main.go 2>&1 | tail -5
+go mod tidy 2>&1 | tail -5 || echo "  go mod tidy skipped"
+go build -o smart-scale-server cmd/server/main.go 2>&1 | tail -5 || { echo "  ❌ Go 编译失败"; exit 1; }
 nohup ./smart-scale-server > "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "  Go 后端 PID: $BACKEND_PID"
@@ -88,7 +81,7 @@ if [ ! -d "venv" ]; then
     python3 -m venv venv
 fi
 source venv/bin/activate
-pip install -q -r requirements.txt 2>&1 | tail -3
+pip install -q -r requirements.txt 2>&1 | tail -3 || echo "  pip install skipped"
 
 nohup uvicorn app:app --host 0.0.0.0 --port 8001 > "$LOG_DIR/rag.log" 2>&1 &
 RAG_PID=$!
@@ -114,7 +107,13 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         client_max_body_size 10M;
-        proxy_read_timeout 60s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        # SSE 支持：禁用缓冲
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_http_version 1.1;
+        chunked_transfer_encoding on;
     }
 
     # RAG API 反向代理 -> Python :8001
@@ -123,7 +122,9 @@ server {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 60s;
+        proxy_read_timeout 120s;
+        proxy_buffering off;
+        proxy_http_version 1.1;
     }
 
     # 前端路由 fallback

@@ -60,7 +60,7 @@ export UPLOAD_MAX_SIZE_MB=10
 
 export DATABASE_URL=postgresql://postgres:321738392@localhost:5432/smart_scale
 export RAG_SERVER_PORT=8001
-export TEXT_MODEL=qwen-plus
+export TEXT_MODEL=qwen3.6-flash
 export VL_MODEL=qwen-vl-flash
 export EMBEDDING_MODEL=text-embedding-v2
 export SIMILARITY_THRESHOLD=0.3

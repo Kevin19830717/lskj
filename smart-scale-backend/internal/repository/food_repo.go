@@ -223,10 +223,10 @@ func (r *FoodRepository) Count(ctx context.Context) (int64, error) {
 // GetTopFoods 获取用户最常食用的食物排行
 func (r *FoodRepository) GetTopFoods(ctx context.Context, userID int, days, limit int) ([]model.FoodFrequency, error) {
 	query := `
-		SELECT unnest(ingredients) as food_name_en, COUNT(*) as cnt, COALESCE(SUM(raw_weights_g->>(ordinality-1)::int::numeric), 0) as total_w
-		FROM weigh_records, ordinality(ingredients) WITH ORDINALITY
+		SELECT elem as food_name_en, COUNT(*) as cnt
+		FROM weigh_records, jsonb_array_elements_text(ingredients) AS elem
 		WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '1 day' * $2
-		GROUP BY food_name_en ORDER BY cnt DESC LIMIT $3`
+		GROUP BY elem ORDER BY cnt DESC LIMIT $3`
 
 	rows, err := database.Pool.Query(ctx, query, userID, days, limit)
 	if err != nil {
@@ -234,12 +234,20 @@ func (r *FoodRepository) GetTopFoods(ctx context.Context, userID int, days, limi
 	}
 	defer rows.Close()
 
+	// 获取英文名→中文名映射
+	nameMap, _ := r.GetAllNameMappings(ctx)
+
 	var results []model.FoodFrequency
 	for rows.Next() {
 		var fr model.FoodFrequency
-		if err := rows.Scan(&fr.NameEn, &fr.Count, &fr.TotalWeightG); err != nil {
+		if err := rows.Scan(&fr.NameEn, &fr.Count); err != nil {
 			continue
 		}
+		fr.Name = nameMap[fr.NameEn]
+		if fr.Name == "" {
+			fr.Name = fr.NameEn
+		}
+		fr.TotalWeightG = 0
 		results = append(results, fr)
 	}
 	return results, nil

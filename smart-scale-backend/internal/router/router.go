@@ -1,9 +1,11 @@
 package router
 
 import (
+	"log"
 	"smart-scale-backend/internal/handler"
 	"smart-scale-backend/internal/middleware"
 	"smart-scale-backend/internal/service"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )

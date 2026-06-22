@@ -138,3 +138,10 @@ func (s *MealService) GetDailySummary(ctx context.Context, userID int, date time
 func (s *MealService) GetRecentMeals(ctx context.Context, userID int, limit int) ([]*model.WeighRecord, error) {
 	return s.mealRepo.GetRecentMeals(ctx, userID, limit)
 }
+
+// GetMealsInDays 获取最近N天的所有餐食记录
+func (s *MealService) GetMealsInDays(ctx context.Context, userID int, days int) ([]*model.WeighRecord, error) {
+	start := time.Now().AddDate(0, 0, -days)
+	end := time.Now().AddDate(0, 0, 1)
+	return s.mealRepo.QueryRecordsByDateRange(ctx, userID, start, end)
+}

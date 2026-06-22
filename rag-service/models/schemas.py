@@ -168,3 +168,25 @@ class HealthCheckResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     database: Optional[dict] = None
     dashscope_connected: bool = False
+
+
+# ==================== Chat API ====================
+
+class ChatMessage(BaseModel):
+    """单条聊天消息"""
+    role: str = Field(..., description="消息角色: user / assistant")
+    content: str = Field(..., description="消息内容")
+
+
+class ChatRequest(BaseModel):
+    """AI 对话请求体"""
+    user_id: int = Field(..., description="用户ID")
+    message: str = Field(..., description="本次用户消息")
+    history: List[ChatMessage] = Field(default_factory=list, description="历史对话(不含本次消息)")
+
+
+class ChatResponse(BaseModel):
+    """AI 对话响应体"""
+    reply: str = Field(..., description="AI 回复内容")
+    model_used: str = "qwen-plus"
+    generated_at: datetime = Field(default_factory=datetime.utcnow)

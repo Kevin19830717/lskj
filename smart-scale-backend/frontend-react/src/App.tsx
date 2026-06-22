@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useState, useRef, useCallback, useEffect } from "react"
-import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -35,6 +35,11 @@ import {
   X,
 } from "lucide-react"
 import DashboardPage from "@/pages/DashboardPage"
+import RecordsPage from "@/pages/RecordsPage"
+import ReportsPage from "@/pages/ReportsPage"
+import AIChatPage from "@/pages/AIChatPage"
+import FoodsPage from "@/pages/FoodsPage"
+import ProfilePage from "@/pages/ProfilePage"
 
 // ============================================================
 // API
@@ -746,13 +751,25 @@ function LandingPage() {
 // ============================================================
 // App - Router
 // ============================================================
+function AppRoutes() {
+  const location = useLocation()
+  return (
+    <Routes location={location}>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="/records" element={<RecordsPage />} />
+      <Route path="/reports" element={<ReportsPage />} />
+      <Route path="/ai-chat" element={<AIChatPage />} />
+      <Route path="/foods" element={<FoodsPage />} />
+      <Route path="/profile" element={<ProfilePage />} />
+    </Routes>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
-      </Routes>
+      <AppRoutes />
     </BrowserRouter>
   )
 }

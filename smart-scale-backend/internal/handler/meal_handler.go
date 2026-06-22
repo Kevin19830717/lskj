@@ -39,6 +39,34 @@ func (h *MealHandler) RecordWeighIn(c *gin.Context) {
 	c.JSON(http.StatusCreated, model.Success(record))
 }
 
+// RecordWeighInTest 测试用称重数据上报接口（免JWT认证，仅供嵌入式端联调测试）
+// POST /api/v1/test/weigh-in?user_id=1
+// 复用正式接口的 WeighInRequest 结构与业务逻辑，user_id 通过 query 参数指定，默认为 1。
+// 注意：该接口无身份校验，仅应在开发/测试环境使用，切勿暴露到生产环境。
+func (h *MealHandler) RecordWeighInTest(c *gin.Context) {
+	// 测试接口：user_id 从 query 读取，默认 1（需为库中已存在的用户）
+	userID := int64(1)
+	if uidStr := c.Query("user_id"); uidStr != "" {
+		if uid, err := strconv.ParseInt(uidStr, 10, 64); err == nil && uid > 0 {
+			userID = uid
+		}
+	}
+
+	var req model.WeighInRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request: "+err.Error()))
+		return
+	}
+
+	record, err := h.mealService.RecordWeighIn(c.Request.Context(), int(userID), &req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusCreated, model.Success(record))
+}
+
 // GetHistoryRecords 查询历史称重记录
 // GET /api/v1/records?page=&page_size=&start_date=&end_date=
 func (h *MealHandler) GetHistoryRecords(c *gin.Context) {

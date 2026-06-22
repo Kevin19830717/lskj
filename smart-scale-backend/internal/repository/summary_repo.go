@@ -164,3 +164,23 @@ func (r *SummaryRepository) GetEarliestDate(ctx context.Context, userID int, sum
 	}
 	return &d, nil
 }
+
+// FindByUserDateType 按用户+日期+类型查找单条摘要
+func (r *SummaryRepository) FindByUserDateType(ctx context.Context, userID int, date time.Time, summaryType string) (*model.AnalysisSummary, error) {
+	query := `SELECT id, user_id, summary_date, summary_type, source, insights, created_at
+		FROM user_analysis_summaries
+		WHERE user_id = $1 AND summary_date = $2 AND summary_type = $3 LIMIT 1`
+
+	row := database.Pool.QueryRow(ctx, query, userID, date, summaryType)
+	var s model.AnalysisSummary
+	var insightsJSON []byte
+	err := row.Scan(&s.ID, &s.UserID, &s.SummaryDate, &s.SummaryType, &s.Source, &insightsJSON, &s.CreatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find summary: %w", err)
+	}
+	json.Unmarshal(insightsJSON, &s.Insights)
+	return &s, nil
+}

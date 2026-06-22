@@ -106,7 +106,7 @@ func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page
 			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod,
 			&rec.CookedWeightG, &rec.CookedEnergyKcal, &rec.CookedProteinG, &rec.CookedFatG,
 			&rec.CookedCarbohydrateG, &rec.CookedSodiumMg, &rec.CookedCholesterolMg,
-			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, &rec.CookedPotassiumMg,
+			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, 			&rec.CookedPotassiumMg,
 			&rec.CreatedAt,
 		)
 		if err != nil {
@@ -148,7 +148,7 @@ func (r *MealRepository) QueryRecordsByDateRange(ctx context.Context, userID int
 			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod,
 			&rec.CookedWeightG, &rec.CookedEnergyKcal, &rec.CookedProteinG, &rec.CookedFatG,
 			&rec.CookedCarbohydrateG, &rec.CookedSodiumMg, &rec.CookedCholesterolMg,
-			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, &rec.CookedPotassiumMg,
+			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, 			&rec.CookedPotassiumMg,
 			&rec.CreatedAt,
 		); err != nil {
 			continue
@@ -186,7 +186,7 @@ func (r *MealRepository) GetRecentMeals(ctx context.Context, userID int, limit i
 			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod,
 			&rec.CookedWeightG, &rec.CookedEnergyKcal, &rec.CookedProteinG, &rec.CookedFatG,
 			&rec.CookedCarbohydrateG, &rec.CookedSodiumMg, &rec.CookedCholesterolMg,
-			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, &rec.CookedPotassiumMg,
+			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, 			&rec.CookedPotassiumMg,
 			&rec.CreatedAt,
 		); err != nil {
 			continue
@@ -317,4 +317,44 @@ func (r *MealRepository) DeleteArchivedRecords(ctx context.Context, userID int, 
 		return 0, fmt.Errorf("failed to delete archived records: %w", err)
 	}
 	return result.RowsAffected(), nil
+}
+
+// GetUsersWithRecordsBefore 获取在指定日期之前有称重记录的用户列表
+func (r *MealRepository) GetUsersWithRecordsBefore(ctx context.Context, before time.Time) ([]int, error) {
+	query := `SELECT DISTINCT user_id FROM weigh_records WHERE created_at < $1`
+	rows, err := database.Pool.Query(ctx, query, before)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get users with records before: %w", err)
+	}
+	defer rows.Close()
+
+	var userIDs []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		userIDs = append(userIDs, id)
+	}
+	return userIDs, nil
+}
+
+// GetUsersWithSummariesBefore 获取在指定日期之前有特定类型摘要的用户列表
+func (r *MealRepository) GetUsersWithSummariesBefore(ctx context.Context, before time.Time, summaryType string) ([]int, error) {
+	query := `SELECT DISTINCT user_id FROM user_analysis_summaries WHERE summary_date < $1 AND summary_type = $2`
+	rows, err := database.Pool.Query(ctx, query, before, summaryType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get users with summaries before: %w", err)
+	}
+	defer rows.Close()
+
+	var userIDs []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		userIDs = append(userIDs, id)
+	}
+	return userIDs, nil
 }

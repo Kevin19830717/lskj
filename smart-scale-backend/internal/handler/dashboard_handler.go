@@ -3,6 +3,7 @@ package handler
 import (
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"smart-scale-backend/internal/model"
@@ -28,62 +29,26 @@ func NewDashboardHandler(mealSvc *service.MealService, userSvc *service.UserServ
 }
 
 // GetStats 获取仪表盘统计概览
-// GET /api/v1/dashboard/stats
+// GET /api/v1/dashboard/stats?days=7
 func (h *DashboardHandler) GetStats(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 	ctx := c.Request.Context()
 	days := 7
-
-	// 并行获取各维度数据
-	type result struct {
-		totalMeals    int64
-		trend         []model.TrendPoint
-		topFoods      []model.FoodFrequency
-		latestAdvice  *model.HealthAdvice
-		healthScore   int
-		err           error
+	if d, err := strconv.Atoi(c.DefaultQuery("days", "7")); err == nil && d > 0 && d <= 365 {
+		days = d
 	}
 
-	res := make(chan result, 1)
-	go func() {
-		var r result
-		// TODO: implement stats via service layer
-		r.totalMeals = 0
-		r.topFoods, _ = h.foodService.GetTopFoods(ctx, int(userID), days, 10)
-		r.latestAdvice, _ = h.ragSvc.GetLatestAdvice(ctx, int(userID), "weekly")
-		r.healthScore, _ = h.userService.GetHealthScore(ctx, int(userID))
-		res <- r
-	}()
-
-	r := <-res
-	if r.err != nil {
-		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to load dashboard stats"))
+	// 获取指定时间范围内的所有餐食记录
+	records, err := h.mealService.GetMealsInDays(ctx, int(userID), days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to load meal records"))
 		return
 	}
 
-	// 计算平均日热量
-	var avgEnergy float64
-	for _, t := range r.trend {
-		avgEnergy += t.Value
-	}
-	if len(r.trend) > 0 {
-		avgEnergy = avgEnergy / float64(len(r.trend))
-	}
-
-	stats := model.DashboardStats{
-		PeriodDays:     days,
-		TotalMeals:     r.totalMeals,
-		AvgDailyEnergy: math.Round(avgEnergy*100) / 100,
-		EnergyTrend:     r.trend,
-		TopFoods:       r.topFoods,
-		LatestAdvice:   r.latestAdvice,
-	}
-
-	// 计算营养分布及均值：取最近有数据的N天（不要求一定是近N个日历日）
-	records, _ := h.mealService.GetRecentMeals(ctx, int(userID), min(days*5, 50))
-	// dayTotals: key=日期字符串(YYYY-MM-DD), value=当日各营养素汇总
+	// 按日期聚合营养数据
 	type dayNutrients struct {
 		Energy, Protein, Fat, Carb float64
+		MealCount                  int
 	}
 	dayTotals := make(map[string]*dayNutrients)
 	for _, rec := range records {
@@ -93,6 +58,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 			dn = &dayNutrients{}
 			dayTotals[dateStr] = dn
 		}
+		dn.MealCount++
 		if rec.CookedEnergyKcal != nil {
 			dn.Energy += *rec.CookedEnergyKcal
 		}
@@ -107,72 +73,145 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		}
 	}
 
-	// 只取最近N个有数据的天
+	// 构建趋势数据（按日期升序排列）
+	var trend []model.TrendPoint
+	dates := make([]string, 0, len(dayTotals))
+	for d := range dayTotals {
+		dates = append(dates, d)
+	}
+	sort.Strings(dates)
+	for _, d := range dates {
+		trend = append(trend, model.TrendPoint{
+			Date:  d,
+			Value: math.Round(dayTotals[d].Energy*100) / 100,
+		})
+	}
+
+	// 计算总餐数
+	totalMeals := int64(len(records))
+
+	// 计算日均营养素
 	actualDayCount := len(dayTotals)
-	if actualDayCount > days {
-		// 按日期排序，只保留最近days天
-		type kv struct {
-			date string
-			dn   *dayNutrients
-		}
-		var sorted []kv
-		for d, dn := range dayTotals {
-			sorted = append(sorted, kv{d, dn})
-		}
-		// 简单按日期降序排序
-		for i := 0; i < len(sorted); i++ {
-			for j := i + 1; j < len(sorted); j++ {
-				if sorted[j].date > sorted[i].date {
-					sorted[i], sorted[j] = sorted[j], sorted[i]
-				}
-			}
-		}
-		// 重建 dayTotals，只保留前 days 天
-		dayTotals = make(map[string]*dayNutrients)
-		for i := 0; i < days && i < len(sorted); i++ {
-			dayTotals[sorted[i].date] = sorted[i].dn
-		}
-		actualDayCount = len(dayTotals)
-	}
 	var sumEnergy, sumP, sumF, sumC float64
-	if actualDayCount > 0 {
-		for _, dn := range dayTotals {
-			sumEnergy += dn.Energy
-			sumP += dn.Protein
-			sumF += dn.Fat
-			sumC += dn.Carb
-		}
-		stats.AvgDailyEnergy = math.Round(sumEnergy/float64(actualDayCount)*100) / 100
-		stats.TotalProtein = math.Round(sumP/float64(actualDayCount)*10) / 10
-		stats.TotalFat = math.Round(sumF/float64(actualDayCount)*10) / 10
-		stats.TotalCarb = math.Round(sumC/float64(actualDayCount)*10) / 10
+	for _, dn := range dayTotals {
+		sumEnergy += dn.Energy
+		sumP += dn.Protein
+		sumF += dn.Fat
+		sumC += dn.Carb
 	}
+
+	var avgDailyEnergy, avgProtein, avgFat, avgCarb float64
+	if actualDayCount > 0 {
+		avgDailyEnergy = math.Round(sumEnergy/float64(actualDayCount)*100) / 100
+		avgProtein = math.Round(sumP/float64(actualDayCount)*10) / 10
+		avgFat = math.Round(sumF/float64(actualDayCount)*10) / 10
+		avgCarb = math.Round(sumC/float64(actualDayCount)*10) / 10
+	}
+
+	// 营养素分布占比
 	totalMacro := sumP + sumF + sumC
+	nutrientDist := model.NutrientDist{}
 	if totalMacro > 0 {
-		stats.NutrientDistribution = model.NutrientDist{
+		nutrientDist = model.NutrientDist{
 			ProteinPct: math.Round(sumP/totalMacro*10000) / 100,
 			FatPct:     math.Round(sumF/totalMacro*10000) / 100,
 			CarbPct:    math.Round(sumC/totalMacro*10000) / 100,
 		}
 	}
 
+	// 常吃食物排行
+	topFoods, _ := h.foodService.GetTopFoods(ctx, int(userID), days, 10)
+
+	stats := model.DashboardStats{
+		PeriodDays:           days,
+		TotalMeals:           totalMeals,
+		AvgDailyEnergy:       avgDailyEnergy,
+		TotalProtein:         avgProtein,
+		TotalFat:             avgFat,
+		TotalCarb:            avgCarb,
+		EnergyTrend:          trend,
+		TopFoods:             topFoods,
+		NutrientDistribution: nutrientDist,
+	}
+
 	c.JSON(http.StatusOK, model.Success(stats))
 }
 
 // GetRecentMeals 获取最近餐食
-// GET /api/v1/dashboard/recent-meals
+// GET /api/v1/dashboard/recent-meals?days=7&limit=5
 func (h *DashboardHandler) GetRecentMeals(c *gin.Context) {
 	userID := c.GetInt64("user_id")
+	ctx := c.Request.Context()
 
-	limit := 10
-	if l, err := strconv.Atoi(c.DefaultQuery("limit", "10")); err == nil && l > 0 && l <= 50 {
+	days := 7
+	if d, err := strconv.Atoi(c.DefaultQuery("days", "7")); err == nil && d > 0 && d <= 365 {
+		days = d
+	}
+
+	limit := 5
+	if l, err := strconv.Atoi(c.DefaultQuery("limit", "5")); err == nil && l > 0 && l <= 50 {
 		limit = l
 	}
 
-	meals, err := h.mealService.GetRecentMeals(c.Request.Context(), int(userID), limit)
+	// 获取指定天数内的所有记录，然后截取 limit 条
+	records, err := h.mealService.GetMealsInDays(ctx, int(userID), days)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to get recent meals"))
 		return
 	}
-	c.JSON(http.StatusOK, model.Success(meals))
+
+	// 获取中文名称映射
+	nameMapping, _ := h.foodService.GetAllNameMappings(ctx)
+
+	// records 按 created_at DESC 排序（QueryRecordsByDateRange 返回 ASC，需反转）
+	// 取最近 limit 条
+	if len(records) > limit {
+		records = records[len(records)-limit:]
+	}
+	// 反转使最近的在前
+	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+		records[i], records[j] = records[j], records[i]
+	}
+
+	// 构建响应（包含 ingredient_names 和 cooking_method_label）
+	responses := make([]model.WeighRecordResponse, 0, len(records))
+	for _, rec := range records {
+		resp := model.WeighRecordResponse{
+			ID:                  rec.ID,
+			UserID:              rec.UserID,
+			Ingredients:         rec.Ingredients,
+			RawWeightsG:         rec.RawWeightsG,
+			CookingMethod:       rec.CookingMethod,
+			CookedWeightG:       rec.CookedWeightG,
+			CookedEnergyKcal:    rec.CookedEnergyKcal,
+			CookedProteinG:      rec.CookedProteinG,
+			CookedFatG:          rec.CookedFatG,
+			CookedCarbohydrateG: rec.CookedCarbohydrateG,
+			CookedSodiumMg:      rec.CookedSodiumMg,
+			CookedCholesterolMg: rec.CookedCholesterolMg,
+			CookedVitaminCMg:    rec.CookedVitaminCMg,
+			CookedCalciumMg:     rec.CookedCalciumMg,
+			CookedIronMg:        rec.CookedIronMg,
+			CookedPotassiumMg:   rec.CookedPotassiumMg,
+			CreatedAt:           rec.CreatedAt,
+		}
+
+		// 中文名
+		for _, ing := range rec.Ingredients {
+			if zhName, ok := nameMapping[ing]; ok {
+				resp.IngredientNames = append(resp.IngredientNames, zhName)
+			} else {
+				resp.IngredientNames = append(resp.IngredientNames, ing)
+			}
+		}
+
+		// 烹饪方式中文标签
+		if label, ok := model.CookingMethodLabels[model.CookingMethod(rec.CookingMethod)]; ok {
+			resp.CookingMethodLabel = label
+		}
+
+		responses = append(responses, resp)
+	}
+
+	c.JSON(http.StatusOK, model.Success(responses))
 }

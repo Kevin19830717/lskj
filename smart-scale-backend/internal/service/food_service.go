@@ -97,3 +97,8 @@ func (s *FoodService) Count(ctx context.Context) (int64, error) {
 func (s *FoodService) GetTopFoods(ctx context.Context, userID int, days, limit int) ([]model.FoodFrequency, error) {
 	return s.foodRepo.GetTopFoods(ctx, userID, days, limit)
 }
+
+// GetAllNameMappings 获取所有食物英文名→中文名映射
+func (s *FoodService) GetAllNameMappings(ctx context.Context) (map[string]string, error) {
+	return s.foodRepo.GetAllNameMappings(ctx)
+}

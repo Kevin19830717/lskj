@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"smart-scale-backend/internal/database"
 	"smart-scale-backend/internal/model"
@@ -23,20 +24,32 @@ func NewEmbeddingRepository() *EmbeddingRepository {
 func (r *EmbeddingRepository) Save(ctx context.Context, emb *model.UserHealthEmbedding) error {
 	metadataJSON, _ := json.Marshal(emb.Metadata)
 
+	// pgvector 需要 "[0.1,0.2,...]" 格式的字符串
+	vecStr := floatsToVectorStr(emb.Embedding)
+
 	query := `INSERT INTO user_health_embeddings 
 		(user_id, source_type, source_date, content_text, embedding, metadata, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())
+		VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, NOW())
 		RETURNING id, created_at`
 
 	err := r.pool.QueryRow(ctx, query,
 		emb.UserID, emb.SourceType, emb.SourceDate, emb.ContentText,
-		emb.Embedding, metadataJSON,
+		vecStr, metadataJSON,
 	).Scan(&emb.ID, &emb.CreatedAt)
 
 	if err != nil {
 		return fmt.Errorf("failed to save embedding: %w", err)
 	}
 	return nil
+}
+
+// floatsToVectorStr 将 []float64 转为 pgvector 格式字符串 "[0.1,0.2,...]"
+func floatsToVectorStr(vec []float64) string {
+	strs := make([]string, len(vec))
+	for i, v := range vec {
+		strs[i] = fmt.Sprintf("%v", v)
+	}
+	return "[" + strings.Join(strs, ",") + "]"
 }
 
 // SearchSimilar 检索最相似的向量（Top-K，余弦相似度）
@@ -49,7 +62,7 @@ func (r *EmbeddingRepository) SearchSimilar(ctx context.Context, userID int, que
 		ORDER BY embedding <=> $1::vector
 		LIMIT %d`, topK)
 
-	rows, err := r.pool.Query(ctx, query, queryVec, userID)
+	rows, err := r.pool.Query(ctx, query, floatsToVectorStr(queryVec), userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search similar embeddings: %w", err)
 	}

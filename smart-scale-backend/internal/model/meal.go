@@ -5,6 +5,9 @@ import "time"
 // UserProfile 用户健康画像
 type UserProfile struct {
 	UserID          int              `json:"user_id" db:"user_id"`
+	Nickname        string           `json:"nickname,omitempty"`
+	Phone           string           `json:"phone,omitempty"`
+	AvatarURL       string           `json:"avatar_url,omitempty"`
 	Gender          string           `json:"gender,omitempty" db:"gender"`
 	Age             *int             `json:"age,omitempty" db:"age"`
 	HeightCm        *float64         `json:"height_cm,omitempty" db:"height_cm"`
@@ -18,6 +21,7 @@ type UserProfile struct {
 
 // UpdateProfileRequest 更新画像请求
 type UpdateProfileRequest struct {
+	Nickname       *string  `json:"nickname,omitempty" binding:"omitempty,min=1,max=50"`
 	Gender         *string  `json:"gender,omitempty" binding:"omitempty,oneof=male female other"`
 	Age            *int     `json:"age,omitempty" binding:"omitempty,min=1,max=150"`
 	HeightCm       *float64 `json:"height_cm,omitempty" binding:"omitempty,min=50,max=300"`

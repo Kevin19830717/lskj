@@ -16,7 +16,7 @@ jwt:
 
 aliyun:
   api_key: sk-07c88e8d2fe8470c934c19682c403467
-  text_model: qwen-plus
+  text_model: qwen3.6-flash
   vl_model: qwen-vl-flash
   embedding_model: text-embedding-v2
 
@@ -27,3 +27,9 @@ upload:
 cron:
   weekly_advice: "0 8 * * 1"
   daily_archive: "0 2 * * *"
+
+admin:
+  key: smart-scale-admin-key-change-me
+
+rag:
+  base_url: http://localhost:8001

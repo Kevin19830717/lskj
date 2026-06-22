@@ -1,448 +1,334 @@
 ================================================================================
-    智能饮食健康秤 (Smart Scale) - 项目交接说明文档
-    整理日期: 2026-06-06
+    智能饮食健康秤 (Smart Scale) - AI 助手对话记录与项目交接说明
+    整理日期: 2026-06-22
 ================================================================================
 
+本文件总结了近期与 AI 助手的所有对话改动记录，供下一个 AI 助手参考接手。
+请仔细阅读"待解决问题"部分，这些问题尚未解决，需要优先处理。
+
+================================================================================
 目录：
   一、项目概况与架构
-  二、环境与部署
-  三、前端 UI 改造详情（我们在对话中做的所有改动）
-  四、五主题色系统完整说明
-  五、CSS 变量体系
-  六、头像字母同步机制
-  七、已知问题与注意事项
-  八、修改主题/增加新页面的方法
-  九、常用命令与路径速查
+  二、本次对话完成的所有改动（按页面分类）
+  三、待解决问题（重要！下一个 AI 需优先处理）
+  四、关键配置与文件路径
+  五、数据库变更记录
+================================================================================
 
 ================================================================================
 一、项目概况与架构
 ================================================================================
 
-【项目简介】
-  智能饮食健康秤系统，配合 ESP32-P4 嵌入式设备（摄像头 YOLO11n + 压力传感器
-  + LightGBM 营养预测 + LCD 显示），实现食物称重、营养分析、AI健康建议。
+项目名称：智能饮食健康秤 (Smart Scale)
+项目路径：/home/ubuntu/lskj/
 
-【技术栈】
-  - Go 后端：Go 1.22 + Gin 框架，端口 8080
-  - Python RAG 服务：Python 3.10+ / FastAPI，端口 8001
-  - 数据库：PostgreSQL 16 + pgvector 扩展（向量检索）
-  - 前端：纯 HTML/CSS/JS（无框架），Chart.js 图表库
-  - 反向代理：Nginx，端口 80
-  - AI 模型：阿里云百炼 DashScope（qwen-plus / qwen-vl-flash / text-embedding-v2）
-  - 认证：JWT（24小时过期）
-  - 容器化：Docker Compose，4个容器一键部署
-  - 部署服务器：Ubuntu，公网 IP 106.53.198.194
+技术栈：
+  - 后端：Go (Gin框架) 端口 8080
+  - RAG服务：Python (FastAPI + httpx) 端口 8001
+  - 前端：React + TypeScript + Vite + TailwindCSS v4 + Framer Motion
+  - 数据库：PostgreSQL + pgvector
+  - AI模型：阿里云百炼 qwen3.6-flash (OpenAI兼容 Responses API)
+  - 反向代理：Nginx 端口 80
 
-【项目目录】
-  /home/ubuntu/lskj/
-  ├── docker-compose.yml          # Docker 编排（postgres/backend/rag/nginx）
-  ├── start.sh / stop.sh          # 一键启停脚本
-  ├── .env.example                # 环境变量模板
-  ├── nginx/nginx.conf            # Docker 内 Nginx 配置
-  ├── smart-scale-backend/        # Go 后端
-  │   ├── cmd/server/main.go      # 入口
-  │   ├── internal/
-  │   │   ├── config/             # 配置
-  │   │   ├── database/db.go      # pgx 连接池
-  │   │   ├── handler/            # 7个 HTTP handler
-  │   │   ├── middleware/          # JWT/CORS/Logger
-  │   │   ├── model/              # 数据模型
-  │   │   ├── repository/         # 6个数据访问层
-  │   │   ├── router/             # 路由注册
-  │   │   └── service/            # 7个业务逻辑层
-  │   ├── pkg/dashscope/          # 阿里云百炼 API 封装
-  │   ├── frontend/               # ★ 前端静态文件（详见第三节）
-  │   ├── migrations/001_init.sql # 建表 SQL
-  │   └── Dockerfile              # 多阶段构建
-  └── rag-service/                # Python RAG 服务
-      ├── app.py                  # FastAPI 入口
-      ├── routers/rag.py          # 5个 API 端点
-      └── services/               # 向量化/检索/生成
+前端有两个版本：
+  1. 旧版 HTML：/home/ubuntu/lskj/smart-scale-backend/frontend/ (已基本不用)
+  2. 新版 React：/home/ubuntu/lskj/smart-scale-backend/frontend-react/ (主要使用)
+     - 构建产物在 dist/ 目录
+     - Nginx 指向 dist/ 目录提供静态文件
 
-【数据库表】
-  1. users                     - 用户账户
-  2. user_profiles             - 健康画像
-  3. foods                     - 食材营养数据库（31种）
-  4. weigh_records             - 称重记录（分区表）
-  5. user_analysis_summaries   - 营养分析摘要
-  6. health_advice_records     - AI健康建议
-  7. user_health_embeddings    - 向量嵌入（pgvector, 1536维）
+启动方式：
+  bash /home/ubuntu/lskj/start.sh   # 启动所有服务
+  bash /home/ubuntu/lskj/stop.sh    # 停止所有服务
 
-【API 端点概要】
-  - 认证：POST /api/v1/auth/register, POST /api/v1/auth/login
-  - 用户：GET/PUT /user/profile, POST /user/avatar, GET /user/health-score
-  - 称重：POST /weigh-in, GET /records, GET /daily-summary
-  - 食物：CRUD /foods
-  - 摘要：POST /summaries/generate, GET /summaries
-  - AI建议：POST /health-advice/generate, GET /health-advice/latest
-  - 仪表盘：GET /dashboard/stats
-  - RAG：/rag/ 前缀代理到 Python 服务
+RAG服务手动重启（需要带环境变量）：
+  pkill -f "uvicorn app:app"
+  cd /home/ubuntu/lskj/rag-service && source venv/bin/activate
+  export DASHSCOPE_API_KEY=sk-07c88e8d2fe8470c934c19682c403467
+  export DATABASE_URL=postgresql://postgres:321738392@localhost:5432/smart_scale
+  export TEXT_MODEL=qwen3.6-flash
+  export VL_MODEL=qwen-vl-flash
+  export EMBEDDING_MODEL=text-embedding-v2
+  nohup uvicorn app:app --host 0.0.0.0 --port 8001 > /home/ubuntu/lskj/logs/rag.log 2>&1 &
+
+注意：start.sh 中设置了 set -e 已被移除，go mod tidy 和 pip install 添加了容错。
+但 RAG 服务在 start.sh 中启动时可能丢失环境变量（之前出现过 "Illegal header value b'Bearer '" 错误），
+如果 AI 聊天报错，需要手动用上面的命令带环境变量重启 RAG 服务。
+
+前端构建：
+  cd /home/ubuntu/lskj/smart-scale-backend/frontend-react && npx vite build
+  然后 sudo nginx -s reload
+
+主题色系统：
+  - 绿色：仪表盘页、营养分析报告页（AppShell theme="green"）
+  - 紫色：历史记录页、AI助手页、个人中心页（#667eea / #764ba2 渐变）
+  - CSS变量 --primary 已从绿色改为紫色（在 index.css 中），影响全局 primary 色
 
 ================================================================================
-二、环境与部署
+二、本次对话完成的所有改动（按页面分类）
 ================================================================================
 
-【服务器信息】
-  - 公网 IP：106.53.198.194
-  - 宿主机 Nginx 配置：/etc/nginx/sites-enabled/smart-scale.conf
-  - 前端根目录指向：/home/ubuntu/lskj/smart-scale-backend/frontend/
+----------------------------------------
+1. 仪表盘页 (DashboardPage.tsx)
+----------------------------------------
+- 最近用餐记录从5条改为4条（limit=4），避免出现滚动条
+- 常吃食物排行进度条从绿色改为紫色渐变 (from-[#667eea] to-[#764ba2])
+- 修复后端 GetTopFoods SQL 查询：原来用 unnest(ingredients) 无效（ingredients是jsonb），
+  改为 jsonb_array_elements_text(ingredients)，并填充中文食物名
+- MealDetailCard 详情卡片：添加钠/胆固醇/维生素C/钙/铁/钾6项详细营养素表格
+  + 用餐时间(cooking_time_minutes)显示
+  (注：cooking_time_minutes 列后来被删除，详见数据库变更记录)
+- 已删除 cooking_time_minutes 相关代码（DashboardPage中的Timer图标和烹饪时间显示）
 
-【启动方式】
-  方式一（Docker）：
-    cd /home/ubuntu/lskj && docker-compose up -d
+----------------------------------------
+2. 历史记录页 (RecordsPage.tsx)
+----------------------------------------
+- 分页样式改为与营养库页面一致：圆形按钮(rounded-full)、紫色渐变选中态、
+  上一页/下一页按钮带 ChevronLeft/ChevronRight 图标
+- 详情面板(RecordDetail)改动：
+  * 食材明细左半边占比从 1.5fr 调整为 0.9fr（多次调整，用户要求缩小）
+  * 食材名+重量改为 justify-between 两端对齐（如"苹果    91g"）
+  * 烹饪方式下方添加"用餐时间"行，显示 created_at 的值（不是 cooking_time_minutes）
+  * 用餐时间用 Clock 图标，紫色字体
+  * 整体 flex flex-col justify-center min-h-[240px] 垂直居中
+- 日历日期选择器(date-range-picker.tsx)改动：
+  * 整个框可点击（添加 absolute inset-0 z-20 的透明 Button 覆盖）
+  * DateInput 和 CalendarIcon 设为 pointer-events-none + z-10
+  * 紫色主题：CSS override 在 RecordsPage 的 <style> 标签中
+    (.date-picker-purple 各种选择器覆盖)
+  * 点击后不变全紫色：Button 添加 !bg-transparent + data-[hovered]:!bg-transparent 等
+    （用 !important 覆盖 aria-button 的 ghost variant 默认背景）
 
-  方式二（脚本）：
-    cd /home/ubuntu/lskj && bash start.sh
+----------------------------------------
+3. 营养分析报告页 (ReportsPage.tsx)
+----------------------------------------
+- 保持绿色主题（AppShell theme="green"，绿色生成报告按钮）
+- 详情页改为浅白背景（不再用黑色背景）：
+  * bg-gradient-to-br from-white via-[#fafbff] to-[#f0f4ff]
+  * Tab 选中态白色背景 + 紫色图标
+  * 内容卡片白色半透明
+- 三大块 Tab 布局（AnimatedTabs 风格 + Framer Motion 动画）：
+  1. 基本信息：按分组显示（周期信息/热量与宏量营养素/微量元素/其他），
+     每组 sm:grid-cols-2 两列排列
+  2. 常吃食物：排行列表 + 紫色渐变进度条
+  3. AI 建议：编号列表
+- 中文标签映射(INSIGHTS_LABELS)覆盖所有字段包括微量元素
+- 后端 summary_service.go 修复：
+  * 注入 foodRepo，生成 top_foods 时查询中文名映射
+  * buildInsights 和 mergeInsights 添加 ctx 参数
+  * mergeInsights 合并时优先用 name_en 作为 key（修复中文名查不到的 bug）
 
-【Nginx 关键配置】
-  - / → 静态文件（frontend 目录），fallback 到 index.html
-  - /api/ → 代理到 backend:8080（上传限制 10MB）
-  - /rag/ → 代理到 rag-service:8001
-  - CSS/JS 不缓存（开发模式）：Cache-Control: no-cache
+----------------------------------------
+4. AI 助手页 (AIChatPage.tsx)
+----------------------------------------
+- 改为流式输出(SSE)：
+  * RAG服务新增 POST /api/v1/rag/chat/stream 端点
+  * Go后端新增 ChatStream 方法 SSE 透传
+  * 前端用 fetch + ReadableStream 读取 SSE 流，逐字更新消息
+  * 流式输出光标动画（紫色闪烁竖线）
+- 聊天记录持久化：
+  * 数据库新建 chat_messages 表
+  * RAG服务流式完成后保存用户消息和AI回复
+  * 新增 GET /api/v1/ai/chat/history 接口
+  * 前端加载时调用获取历史记录
+- AI 回复优化：
+  * system prompt 改为"你可以回答任何问题，用户问什么就答什么，不要强行往饮食话题上靠"
+  * "不要用emoji，简洁直接，不要过度展开"
+  * max_output_tokens 从 512 改为 2048（避免长回复被截断，如琵琶行背不完）
+  * 移除 reasoning 参数（不需要深度思考）
+  * 归档查询精简：只取最近2条周报+1条月报（去掉日度和年度）
+  * _build_user_context 和 _get_archived_summaries 改为 asyncio.gather 并行
 
-  注意：如果修改了 CSS/JS 后不生效，检查 Nginx 缓存配置：
-    location ~* \.(css|js)$ {
-        expires -1;
-        add_header Cache-Control "no-cache, must-revalidate";
-    }
+----------------------------------------
+5. 个人中心页 (ProfilePage.tsx) — 注意：用户不满意当前排版
+----------------------------------------
+- 当前状态：左右两栏布局(lg:grid-cols-[1fr_1.5fr])
+  * 左侧：紫色渐变头像卡片(头像+昵称+手机号+使用天数) + 2x2信息摘要(身高/体重/BMI/目标)
+  * 右侧：白色编辑表单卡片，sm:grid-cols-2 两列布局
+- 已删除：健康评分卡片、BMI卡片、健康目标卡片、注册天数卡片、我的统计板块、健康建议板块
+- 已删除：/user/stats 和 /user/health-score 的 API 调用
+- 合并了头像+昵称+手机号+基本画像到一个统一编辑界面
+- 健康目标选项去掉了 emoji（之前是"🔥 减脂"现在是"减脂"）
 
-================================================================================
-三、前端 UI 改造详情（对话中完成的所有改动）
-================================================================================
+----------------------------------------
+6. 食物营养库页 (FoodsPage.tsx)
+----------------------------------------
+- 水果颜色从橘色改为更黄的色调：
+  from #fbbf24→#fde047, to #d97706→#ca8a04, bg #fef3c7→#fef9c3
 
-【改动1：修复两个头像字母不一致的 Bug】
+----------------------------------------
+7. CSS 全局改动 (index.css)
+----------------------------------------
+- --primary CSS 变量从绿色改为紫色 oklch(0.555 0.172 277.07)（约等于#667eea）
+  影响：日期选择器按钮、聚焦环、所有用 bg-primary/text-primary 的组件
+- --ring、--sidebar-primary、--accent 等也改为紫色
 
-  问题：侧边栏头像显示 'K'，个人信息页头像显示 'U'，两个字母不一样。
-  根因：两个头像由不同 JS 函数独立设置：
-    - 侧边栏：app.js 的 initSidebarUser() → 设置 #avatarLetter
-    - 个人信息页：profile.html 的 loadProfileHeader() → 设置 #phcAvatarLetter
-  之前 loadProfileHeader() 的 API 回调里用 'U' 做默认值覆盖了已有值。
-
-  修复动作（3个文件、5处同步代码）：
-    a) profile.html loadProfileHeader()：
-       - 默认值从 'U' 改为空字符串
-       - 设置 #phcAvatarLetter 后同步写 #avatarLetter
-    b) app.js initSidebarUser()：
-       - 设置 #avatarLetter 后同步写 #phcAvatarLetter
-    c) profile.html saveBasicInfo()：
-       - 保存昵称后同步更新两个头像字母
-
-  涉及文件：
-    - /frontend/js/app.js        （第87-152行区域）
-    - /frontend/profile.html     （第232-330行区域）
-
-  重要设计决策：
-    - 只要有显示名（nickname 或 phone），就取首字母大写显示
-    - 没有显示名时字母为空（不再显示误导的 'U'）
-    - 头像图片优先级 > 字母显示（有图片时隐藏字母）
-
-【改动2：背景色加深】
-
-  修改文件：/frontend/css/style-v15.css
-  调整项：
-    - body 径向渐变 alpha：0.50/0.38/0.28/0.40 → 0.65/0.52/0.42/0.55
-    - body::before 光晕：0.08 → 0.14
-    - body::after 网点纹理：0.032 → 0.055
-    - .main-panel 内部光斑：同步加深
-
-【改动3：五页五主题色系统（核心改动）】
-
-  这是最大的改动。在 style-v15.css 中实现了完整的 CSS 变量主题系统，
-  每个页面（仪表盘/历史记录/营养报告/食物库/个人中心）拥有独立的主题色。
-  切换菜单时，侧边栏 + 右侧主内容区的所有颜色联动切换，带 0.5s 平滑过渡动画。
-
-  详情见第四节。
-
-【改动4：主题色刷入动画（已回退，供参考）】
-
-  尝试做了一版"切换页面时新主题色从上往下刷入"的动画效果：
-    - CSS：添加 .theme-wipe 元素 + @keyframes themeWipeDown
-    - JS：triggerThemeWipe() 函数在 checkAuth() 时调用
-  效果是侧边栏+主内容区一起被新颜色刷过覆盖。
-  用户觉得效果不理想，已完整回退。
-  如果以后想重新尝试这个方向，代码在 git 历史中可找回。
-
-================================================================================
-四、五主题色系统完整说明
-================================================================================
-
-【设计理念】
-  每个菜单页对应一个独立主题色，包含：
-  - 侧边栏渐变背景（从上到下 4 段色）
-  - 全局页面背景渐变
-  - 主面板光斑颜色
-  - 头像渐变色
-  - 按钮/标签/边框高亮色
-  - 卡片悬浮效果
-  - 表格 hover / 输入框 focus / 分页激活态
-
-【五个主题色详情】
-
-  ┌──────────┬──────────┬─────────────────────┬──────────┐
-  │ 页面     │ 主题ID   │ 主色 → 辅色          │ 风格     │
-  ├──────────┼──────────┼─────────────────────┼──────────┤
-  │ 仪表盘   │dashboard │ #667eea → #764ba2    │ 靛蓝紫   │
-  │ 历史记录 │records   │ #0ea5e9 → #0891b2    │ 青碧色   │
-  │ 营养报告 │reports   │ #f59e0b → #d97706    │ 琥珀橙   │
-  │ 食物库   │foods     │ #ec4899 → #be185d    │ 玫瑰粉   │
-  │ 个人中心 │profile   │ #8b5cf6 → #6d28d9    │ 紫罗兰   │
-  └──────────┴──────────┴─────────────────────┴──────────┘
-
-【实现方式】
-
-  1. CSS 变量体系（在 :root 中定义，见第五节）
-  2. 每个主题通过 [data-theme="xxx"] 选择器覆盖 CSS 变量
-  3. 每个 HTML 页面在 <body> 上标记 data-theme 属性：
-     - dashboard.html → <body data-theme="dashboard">
-     - records.html   → <body data-theme="records">
-     - reports.html   → <body data-theme="reports">
-     - foods.html     → <body data-theme="foods">
-     - profile.html   → <body data-theme="profile">
-  4. 所有 UI 组件使用 var(--t-xxx) 引用主题变量，而非硬编码颜色
-  5. 所有颜色相关属性加 transition: 0.5s ease，切换时平滑过渡
-
-【每个主题控制的内容范围】
-
-  侧边栏：
-    - 背景渐变 (linear-gradient: --t-dark → --t-mid1 → --t-mid2 → --t-primary)
-    - 阴影颜色（跟随主题深色）
-
-  全局页面：
-    - body 背景渐变 (--bg-grad)
-    - body::before 弥散光晕 (--glow-rgb)
-    - body::after 网点纹理色
-
-  主面板 (.main-panel)：
-    - 内部光斑颜色（跟随 --t-r/--t-g/--t-b）
-    - 边框颜色
-    - 阴影颜色
-
-  通用组件：
-    - .btn-primary 渐变色
-    - .user-avatar-circle 头像渐变色
-    - .pagination button.active 渐变色
-    - 输入框 focus 边框色
-    - 卡片 hover 边框/阴影色
-    - 表格行 hover 背景色
-    - 统计卡片边框色
-    - 下拉选择框 hover 边框色
-    - 搜索框边框色
-    - 食物卡片 hover 顶部彩条
+----------------------------------------
+8. Nginx 配置改动
+----------------------------------------
+- 实际运行的配置在：/etc/nginx/sites-available/smart-scale.conf
+  （注意：start.sh 中的 nginx 配置模板与此文件不同！实际用的是 sites-available 的版本）
+- /api/ location 添加 SSE 支持：
+  proxy_buffering off; proxy_cache off; proxy_http_version 1.1;
+  chunked_transfer_encoding on; proxy_read_timeout 120s;
+- 这对流式 AI 聊天至关重要，否则 nginx 会缓冲 SSE 数据
 
 ================================================================================
-五、CSS 变量体系
+三、待解决问题（重要！下一个 AI 需优先处理）
 ================================================================================
 
-【核心变量定义（在 :root 中）】
+【问题1】AI页面滚动问题 — 仍未解决！
+  描述：每次打开AI页面，聊天记录会从最顶端快速滑到底部，用户体验很差。
+  已尝试的方案：
+    1. requestAnimationFrame + scrollTop = scrollHeight（无效）
+    2. isFirstRender ref 标记首次加载用 instant，后续用 smooth（无效）
+  可能的原因：
+    - 页面切换有 Framer Motion 的进入动画(AnimatePresence)，动画期间 scrollHeight 可能还不稳定
+    - AppShell 组件可能有页面切换过渡动画导致渲染时机问题
+    - useEffect 的依赖 [messages, loading, historyLoaded] 可能在首次渲染时就触发了 smooth 滚动
+  建议方向：
+    - 检查 AppShell 组件的页面切换动画，可能需要在动画完成后才设置 scroll
+    - 用 setTimeout 延迟跳转（如 setTimeout 300ms）
+    - 或者让消息列表初始就渲染在底部（CSS flex-direction: column-reverse）
+    - 或者用 useLayoutEffect 替代 useEffect 在 DOM 绘制前设置 scroll
 
-  主题色变量（每个主题会覆盖这些）：
-    --t-primary     #667eea   主色（侧边栏底部、按钮渐变起点）
-    --t-secondary   #764ba2   辅色（侧边栏阴影、按钮渐变终点）
-    --t-dark        #2d2490   侧边栏顶部深色
-    --t-mid1        #3730a3   侧边栏中段1
-    --t-mid2        #4338ca   侧边栏中段2
-    --t-r/g/b       102,126,234  主色 RGB（用于 rgba() 构建）
-    --t-sr/sg/sb    118,75,162   辅色 RGB
-    --t-dr/dg/db    45,36,144    深色 RGB
+【问题2】个人中心排版 — 用户不满意！
+  描述：用户说"不能只有一个主面板容器还要一些其他的显示，现在这个主面板显得很胖很臃肿"
+  当前是左右两栏，用户可能想要：
+    - 更紧凑的布局
+    - 更多信息展示卡片（不只是编辑表单）
+    - 头像区域不要太大
+  建议方向：
+    - 缩小头像尺寸（28→20）
+    - 头像+昵称横排放在顶部，不要占整个卡片
+    - 下面用多列卡片展示信息（身高/体重/BMI/目标/性别/年龄等）
+    - 编辑表单可以折叠或放在下方
+    - 参考常见 App 的个人中心设计：顶部横条 + 下方网格卡片
 
-  页面背景：
-    --bg-grad    径向渐变（每个主题有不同配色）
-    --glow-rgb   光晕 RGB
+【问题3】AI 聊天响应速度
+  描述：即使用了 qwen3.6-flash 模型，简单问题(如"你好")也要 16-18 秒
+  可能原因：
+    - previous_response_id 会加载之前所有对话历史作为上下文
+    - 之前有一次超长回复（减脂建议几千字），每次都作为上下文处理
+    - system prompt 中注入的用户数据和归档摘要增加了 token 数
+  已优化：精简 system prompt、减少归档查询、max_output_tokens 2048、并行查询
+  建议方向：
+    - 考虑对简单问题(如"你好")不传 previous_response_id
+    - 或者定期清理 response_id 重新开始对话
+    - 或者换用更快的模型
 
-  派生变量（自动跟随主题）：
-    --primary       = var(--t-primary)
-    --primary-dark  = var(--t-secondary)
-    --secondary     = var(--t-secondary)
-    --shadow-sm/md/lg = rgba(var(--t-r),var(--t-g),var(--t-b), ...)
-
-【关键设计决策】
-  - 为什么用单独的 RGB 变量（--t-r, --t-g, --t-b）而不是直接用 hex？
-    → 因为 rgba() 需要 RGB 分量，CSS 无法直接从一个 hex 变量中提取分量，
-      所以需要分开定义。
-  - --transition 设为 0.5s ease（比原来的 0.35s 稍长），让主题切换更平滑
-
-================================================================================
-六、头像字母同步机制
-================================================================================
-
-【涉及元素】
-  - 侧边栏头像：<span id="avatarLetter"> - 在 app.js 中通过 includeSidebar() 注入
-  - 个人信息页头像：<span id="phcAvatarLetter"> - 在 profile.html 中硬编码
-  - 个人信息页图片：<img id="phcAvatarImg"> - 用户上传的头像图片
-  - 侧边栏图片：<img id="avatarImg"> - 在 app.js 中通过 includeSidebar() 注入
-
-【同步流向】
-  任何一方更新字母时，都会同步到另一方：
-
-  场景1 - 其他页面初始化（app.js initSidebarUser）：
-    从 localStorage 读取 user → 取首字母 → 设 #avatarLetter
-    → 顺便设 #phcAvatarLetter（如果当前在个人信息页）
-
-  场景2 - 个人信息页加载（profile.html loadProfileHeader）：
-    先 localStorage 缓存快速填充 → 再 API 拉取覆盖
-    → 每次设 #phcAvatarLetter 后同步 #avatarLetter
-
-  场景3 - 保存基本信息（profile.html saveBasicInfo）：
-    API 保存成功后 → 根据 nickname 取首字母
-    → 同时设 #phcAvatarLetter 和 #avatarLetter
-
-  场景4 - 用户头像优先级：
-    有头像图片 → 显示 img，隐藏字母 span
-    无头像图片 → 隐藏 img，显示字母 span
-
-【潜在问题】
-  - 如果两个页面不在同一个 DOM 中（SPA 场景不会出现，因为我们是多页应用），
-    同步代码会静默失败（getElementById 返回 null），不影响功能。
-  - 头像图片缓存在 localStorage('user_avatar')，注意清缓存时机。
+【问题4】RAG 服务环境变量丢失
+  描述：start.sh 重启后 RAG 服务可能丢失 DASHSCOPE_API_KEY，报 "Illegal header value b'Bearer '"
+  原因：start.sh 中 RAG 服务启动时可能没有正确传递环境变量
+  临时方案：手动带环境变量重启 RAG 服务（见上方命令）
+  建议方向：修复 start.sh 确保 RAG 服务启动时继承所有环境变量，或使用 .env 文件
 
 ================================================================================
-七、已知问题与注意事项
+四、关键配置与文件路径
 ================================================================================
 
-1. CSS 文件版本
-   - 当前主样式文件：css/style-v15.css（虽然注释写 v16，文件名未改）
-   - 旧版本保留：css/style.css
-   - 所有 HTML 页面引用的是 style-v15.css
-   - 如果要大改样式，建议创建 style-v16.css 并批量替换 HTML 引用
+前端页面文件：
+  /home/ubuntu/lskj/smart-scale-backend/frontend-react/src/pages/
+    ├── DashboardPage.tsx    # 仪表盘（绿色主题）
+    ├── RecordsPage.tsx      # 历史记录（紫色主题）
+    ├── FoodsPage.tsx        # 食物营养库（多彩分类色）
+    ├── ReportsPage.tsx      # 营养分析报告（绿色主题）
+    ├── AIChatPage.tsx       # AI助手（紫色主题）
+    └── ProfilePage.tsx      # 个人中心（紫色主题）
 
-2. Nginx 不缓存 CSS/JS
-   - 当前开发模式下 CSS/JS 不缓存，每次请求都会重新下载
-   - 上线后考虑改为版本化文件名或适度缓存
+UI 组件：
+  /home/ubuntu/lskj/smart-scale-backend/frontend-react/src/components/ui/
+    ├── date-range-picker.tsx  # 日期选择器（整个框可点击 + 紫色主题）
+    ├── aria-button.tsx        # 按钮（ghost variant）
+    ├── field.tsx              # FieldGroup 等
+    ├── calendar.tsx           # 日历组件
+    └── popover.tsx            # 弹出层
 
-3. 主题色过渡
-   - 过渡时间 0.5s，如果觉得太快/太慢，修改 --transition 变量即可
-   - 注意：过渡只作用于颜色属性，不会影响布局
+API 定义：
+  /home/ubuntu/lskj/smart-scale-backend/frontend-react/src/lib/api.ts
+  - RecentMeal 接口（含钠/胆固醇/维生素C/钙/铁/钾字段）
+  - WeighRecord 接口
+  - SummaryInsights 接口
+  - AnalysisSummary 接口
 
-4. 侧边栏导航
-   - 所有页面（除 index.html）通过 includeSidebar() 动态注入侧边栏
-   - 侧边栏 HTML 定义在 app.js 中
-   - 修改侧边栏结构需要改 app.js 的 includeSidebar() 函数
-
-5. 页面跳转方式
-   - 菜单点击使用 window.location.href 全量跳转（非 SPA）
-   - 每次跳转都会触发完整的页面生命周期（checkAuth → initSidebarUser → 页面JS）
-
-6. 身份验证流程
-   - app.js checkAuth() 检查 localStorage 中的 JWT token
-   - 无 token 跳转到 index.html（登录页）
-   - 所有 API 请求通过 apiGet/apiPost 自动带 Authorization header
-
-7. API 请求封装
-   - apiGet(url), apiPost(url, data), apiPut(url, data), apiDelete(url)
-   - 定义在 app.js 中
-   - 自动处理 JWT token 注入和 401 跳转
-
-================================================================================
-八、修改主题/增加新页面的方法
-================================================================================
-
-【如何调整某个页面的主题色】
-
-  1. 打开 css/style-v15.css
-  2. 找到对应的 [data-theme="xxx"] 选择器块（约在第 50-65 行）
-  3. 修改以下变量：
-     - --t-primary / --t-secondary（主辅色）
-     - --t-dark / --t-mid1 / --t-mid2（侧边栏四段色，从上到下）
-     - --t-r, --t-g, --t-b（主色 RGB）、--t-sr, --t-sg, --t-sb（辅色 RGB）
-     - --t-dr, --t-dg, --t-db（侧边栏深色 RGB，用于阴影）
-     - --glow-rgb（页面光晕色）
-     - --bg-grad（页面背景渐变）
-  4. 保存，刷新浏览器（Nginx 不缓存，即时生效）
-
-  提示：Hex 颜色转 RGB 分量可以用任意在线工具，
-  例如 #0ea5e9 → R:14, G:165, B:233
-
-【如何新增一个页面并分配主题色】
-
-  1. 创建新 HTML 文件（如 settings.html），复制现有页面的基本结构
-     - 保留 sidebar include 脚本和 checkAuth 调用
-     - <body data-theme="settings"> ← 指定主题ID
-
-  2. 在 css/style-v15.css 中添加新主题规则：
-     [data-theme="settings"] {
-       --t-primary:#xxxxxx; --t-secondary:#xxxxxx;
-       --t-dark:#xxxxxx; --t-mid1:#xxxxxx; --t-mid2:#xxxxxx;
-       --t-r:xx;--t-g:xx;--t-b:xx;
-       --t-sr:xx;--t-sg:xx;--t-sb:xx;
-       --t-dr:xx;--t-dg:xx;--t-db:xx;
-       --glow-rgb:xx,xx,xx;
-       --bg-grad:radial-gradient(...);
-     }
-
-  3. 在 app.js 的 includeSidebar() 中添加菜单项链接（约第180行）
-
-  4. 新页面如果需要使用 app.js 的通用函数，引入：
-     <script src="js/app.js"></script>
-
-  ★ 注意：一定要设置完整的 RGB 分量变量，否则 rgba() 构建的颜色
-    会回退到 :root 默认值（紫色）。
-
-================================================================================
-九、常用命令与路径速查
-================================================================================
-
-【项目根目录】
-  cd /home/ubuntu/lskj/
-
-【启动/停止】
-  bash start.sh          # 启动所有服务
-  bash stop.sh           # 停止所有服务
-  docker-compose up -d   # Docker 方式启动
-  docker-compose down    # Docker 方式停止
-  docker-compose logs -f # 查看日志
-
-【前端文件位置】
-  所有前端文件：/home/ubuntu/lskj/smart-scale-backend/frontend/
-  ├── index.html          # 登录页
-  ├── dashboard.html      # 仪表盘
-  ├── records.html        # 历史记录
-  ├── reports.html        # 营养报告
-  ├── foods.html          # 食物库
-  ├── profile.html        # 个人中心
-  ├── css/
-  │   ├── style-v15.css   # ★ 当前主样式（五主题系统）
-  │   └── style.css       # 旧版样式（保留）
-  └── js/
-      └── app.js          # 通用工具库（API/JWT/侧边栏/Toast）
-
-【Nginx 配置】
-  Docker 内：/home/ubuntu/lskj/nginx/nginx.conf
-  宿主机：  /etc/nginx/sites-enabled/smart-scale.conf
-  reload：  sudo nginx -s reload 或 docker exec nginx nginx -s reload
-
-【后端目录】
+后端关键文件：
   /home/ubuntu/lskj/smart-scale-backend/
-  - 配置文件：configs/config.yaml
-  - 数据库迁移：migrations/001_init.sql
-  - 测试数据生成：scripts/generate_test_data.go
+    ├── cmd/server/main.go                    # 路由注册（含 /ai/chat/stream, /ai/chat/history）
+    ├── internal/handler/chat_handler.go      # AI聊天处理(Chat + ChatStream + ChatHistory)
+    ├── internal/handler/dashboard_handler.go # 仪表盘(含top_foods修复)
+    ├── internal/repository/food_repo.go      # GetTopFoods(jsonb_array_elements_text修复)
+    ├── internal/repository/meal_repo.go      # 称重记录CRUD
+    ├── internal/service/summary_service.go   # 报告生成(含foodRepo中文名映射)
+    └── internal/model/nutrition.go           # 营养模型
 
-【RAG 服务目录】
+RAG 服务：
   /home/ubuntu/lskj/rag-service/
-  - 入口：app.py
-  - 提示词：prompts/system_prompt.py
+    ├── config.py                 # 配置(TEXT_MODEL=qwen3.6-flash)
+    ├── routers/rag.py            # 路由(/chat, /chat/stream, /chat/history)
+    ├── services/generation_service.py  # Responses API 调用
+    └── database/connection.py    # 数据库连接
 
-【登录信息（测试用）】
-  前端地址：http://106.53.198.194
+Nginx 配置：
+  /etc/nginx/sites-available/smart-scale.conf  # 实际运行的配置
+  （注意：start.sh 中的 nginx 配置模板与此不同，实际用的是 sites-available 版本）
 
-================================================================================
-附录：对话中遇到的典型问题及解决方案
-================================================================================
-
-问题1：侧边栏头像字母和个人信息页不一致
-  原因：两个函数独立设置，一个用 'U' 做默认值覆盖了另一个
-  解决：两边互相同步，默认值改为空字符串
-
-问题2：CSS 修改不生效
-  原因：浏览器缓存
-  解决：Nginx 已配置 CSS/JS 不缓存（Cache-Control: no-cache），
-        如果还不行，Ctrl+Shift+R 强制刷新
-
-问题3：主题色切换突兀
-  解决：所有颜色相关属性加 transition: 0.5s ease，平滑过渡
-
-问题4：五个页面无法区分主题
-  解决：给每个 <body> 加 data-theme 属性，CSS 用属性选择器覆盖变量
+CSS：
+  /home/ubuntu/lskj/smart-scale-backend/frontend-react/src/index.css
+  # --primary 等CSS变量在此定义（已改为紫色）
 
 ================================================================================
-                          -- 文档结束 --
+五、数据库变更记录
+================================================================================
+
+1. 删除 cooking_time_minutes 列：
+   ALTER TABLE weigh_records DROP COLUMN IF EXISTS cooking_time_minutes;
+   - 用户明确说"根本就没有 cooking_time_minutes 这一说"
+   - "烹饪时间"指的就是 created_at（用餐时间），不是单独的字段
+   - 后端 Go 代码、前端 TS 代码已全部清理
+
+2. 新建 chat_messages 表（聊天记录持久化）：
+   CREATE TABLE chat_messages (
+       id SERIAL PRIMARY KEY,
+       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+       role VARCHAR(20) NOT NULL,
+       content TEXT NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   );
+   CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id, created_at);
+
+3. ai_conversation_state 表（已存在，用于存储 previous_response_id）：
+   - user_id, last_response_id, updated_at
+
+4. user_analysis_summaries 表（已存在，营养分析报告）：
+   - 存储日/周/月/年报告，insights 字段是 jsonb
+   - top_foods 在 insights 中，含 name(中文)/name_en(英文)/count/total_weight_g
+
+================================================================================
+六、其他注意事项
+================================================================================
+
+1. start.sh 的问题：
+   - 原来有 set -e 导致任何命令失败都退出，已移除
+   - go mod tidy 和 pip install 添加了容错
+   - 但 RAG 服务启动时环境变量传递有问题，可能需要手动重启
+
+2. 烹饪方式颜色映射（COOKING_COLORS 在 RecordsPage.tsx 中定义）：
+   boil(煮)=蓝, braise(炖)=橙, deep_fry(炸)=红, pan_fry(煎)=黄,
+   roast(烤)=紫, steam(蒸)=绿, stir_fry(炒)=青
+
+3. 前端构建后需要 sudo nginx -s reload 才能生效
+
+4. 食物中文名映射在 foods 表中（name_en → name），GetAllNameMappings 方法查询
+
+5. AI 聊天的 system prompt 在 rag.py 的 _get_chat_system_prompt 函数中：
+   - "你可以回答任何问题，用户问什么就答什么，不要强行往饮食话题上靠"
+   - "用中文，简洁直接，不要用emoji，不要过度展开"
+   - 注入用户健康数据和历史归档（仅在相关时使用）
+
+6. 关于 nginx 配置：
+   - 有两份配置：start.sh 中生成的 /tmp/smart-scale.conf 和实际运行的 /etc/nginx/sites-available/smart-scale.conf
+   - 实际运行的是后者，前者不会覆盖后者
+   - 如果修改 start.sh 中的 nginx 配置模板，需要手动同步到 /etc/nginx/sites-available/
+
+================================================================================
+完毕。下一个 AI 助手请优先处理"待解决问题"部分。
 ================================================================================

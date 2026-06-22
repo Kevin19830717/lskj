@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS foods (
 
 CREATE INDEX idx_foods_name_en ON foods(name_en);
 CREATE INDEX idx_foods_category ON foods(category);
-CREATE INDEX idx_foods_name ON foods(name USING gin(to_tsvector('simple', name)));
+CREATE INDEX IF NOT EXISTS idx_foods_name ON foods USING gin(to_tsvector('simple', name));
 
 -- ============================================================
 -- 4. weigh_records 表 - 称重记录（分区表，按created_at范围分区）

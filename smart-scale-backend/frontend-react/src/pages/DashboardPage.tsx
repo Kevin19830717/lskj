@@ -1,8 +1,11 @@
-import { useState, useEffect, useMemo } from "react"
-import { useNavigate, useLocation } from "react-router-dom"
+import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react"
 import { motion } from "framer-motion"
 import { apiGet, type DashboardStats, type RecentMeal } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import AppShell from "@/components/app-shell"
+import { AnimatedNumber, GlowCard, GradientText } from "@/components/fx"
+import { LiquidGlassButton } from "@/components/liquid-glass-button"
+import { cookingColor } from "@/pages/RecordsPage"
 import {
   Card,
   CardContent,
@@ -10,140 +13,41 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { AnimatedDropdown, type DropdownOption } from "@/components/animated-dropdown"
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from "@/components/ui/dropdown-menu"
-import {
-  Flame,
-  Beef,
-  Droplets,
-  Wheat,
-  TrendingUp,
-  TrendingDown,
-  ChevronDown,
-  LogOut,
-  BarChart3,
-  ClipboardList,
-  FileText,
-  UtensilsCrossed,
-  User,
+  Flame, Beef, Droplets, Wheat, TrendingUp, TrendingDown, BarChart3,
+  Clock, PieChart, Apple, X, ChefHat,
 } from "lucide-react"
 
+function metric(v?: number) { if (v == null) return "-"; return v.toFixed(1) }
+
 // ============================================================
-// Sidebar
+// 时间范围选项
 // ============================================================
-const navItems = [
-  { path: "/dashboard", icon: BarChart3, label: "仪表盘", emoji: "📊", isReactRoute: true },
-  { path: "/records", icon: ClipboardList, label: "历史记录", emoji: "📝", isReactRoute: false },
-  { path: "/reports", icon: FileText, label: "营养报告", emoji: "📋", isReactRoute: false },
-  { path: "/foods", icon: UtensilsCrossed, label: "食物库", emoji: "🍽️", isReactRoute: false },
-  { path: "/profile", icon: User, label: "个人中心", emoji: "👤", isReactRoute: false },
+const periodOptions = [
+  { label: "近一周", days: 7 },
+  { label: "近半月", days: 15 },
+  { label: "近一月", days: 30 },
 ]
 
-function DashboardSidebar() {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const [userInitial, setUserInitial] = useState("?")
-
-  useEffect(() => {
-    try {
-      const user = JSON.parse(localStorage.getItem("user") || "{}")
-      const name = user.nickname || user.phone || ""
-      if (name) setUserInitial(name.charAt(0).toUpperCase())
-    } catch {}
-  }, [])
-
-  const handleNav = (path: string, isReactRoute: boolean) => {
-    if (isReactRoute) {
-      navigate(path)
-    } else {
-      window.location.href = path
-    }
-  }
-
-  const handleLogout = () => {
-    localStorage.removeItem("token")
-    localStorage.removeItem("user")
-    navigate("/")
-  }
-
-  return (
-    <nav className="w-60 bg-gradient-to-b from-[#2d2490] via-[#3730a3] to-[#667eea] text-white fixed left-0 top-0 bottom-0 z-50 flex flex-col shadow-[4px_0_24px_rgba(45,36,144,0.3)]">
-      {/* Header */}
-      <div className="text-center py-5 px-5 border-b border-white/10 relative">
-        <span className="text-4xl inline-block drop-shadow-lg animate-[bounce_3s_ease-in-out_infinite]">🥗</span>
-        <h2 className="text-[17px] font-bold mt-2 tracking-wider drop-shadow-sm">智能饮食秤</h2>
-      </div>
-
-      {/* Nav */}
-      <ul className="list-none flex-1 py-3 px-0 overflow-y-auto scrollbar-none">
-        {navItems.map((item) => {
-          const isActive = item.isReactRoute
-            ? location.pathname === item.path
-            : location.pathname === item.path
-          return (
-            <li key={item.path} className={isActive ? "active" : ""}>
-              <button
-                onClick={() => handleNav(item.path, item.isReactRoute)}
-                className={cn(
-                  "w-full flex items-center gap-3 py-3 px-6 text-white/78 transition-all duration-300",
-                  "border-l-[3px] text-left relative overflow-hidden",
-                  "hover:bg-white/9 hover:text-white hover:translate-x-1 hover:border-l-yellow-400/50",
-                  "before:content-[''] before:absolute before:left-0 before:top-0 before:w-0 before:h-full",
-                  "before:bg-gradient-to-r before:from-yellow-300/15 before:to-transparent before:transition-all before:duration-300",
-                  "hover:before:w-full",
-                  isActive && "bg-gradient-to-r from-yellow-400/20 to-yellow-400/5 text-white border-l-yellow-400 font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_2px_8px_rgba(255,213,79,0.1)] before:w-full"
-                )}
-              >
-                <span className="text-lg w-[22px] text-center flex-shrink-0 transition-transform duration-300 hover:scale-110">
-                  {item.emoji}
-                </span>
-                <span className="text-sm">{item.label}</span>
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-
-      {/* User Area */}
-      <div className="p-3.5 border-t border-white/10 bg-gradient-to-t from-black/8 to-transparent">
-        <div className="flex items-center justify-between">
-          <div
-            className="w-[42px] h-[42px] rounded-full bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center font-bold text-[17px] text-white shadow-[0_2px_10px_rgba(102,126,234,0.4)] border-2 border-white/25 cursor-pointer hover:scale-108 hover:shadow-[0_4px_16px_rgba(102,126,234,0.5)] transition-all duration-300"
-            onClick={() => (window.location.href = "/profile")}
-          >
-            {userInitial}
-          </div>
-          <div className="flex-1 flex items-center justify-center">
-            <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-1 text-xs text-white/70 py-1.5 px-4 border border-white/18 rounded-full bg-white/6 tracking-wide hover:text-red-300/95 hover:bg-red-400/10 hover:border-red-300/28 transition-all duration-300 cursor-pointer whitespace-nowrap"
-            >
-              <LogOut className="w-3 h-3" />
-              退出登录
-            </button>
-          </div>
-        </div>
-      </div>
-    </nav>
-  )
-}
+const periodDropdownOptions: DropdownOption[] = periodOptions.map((o) => ({
+  value: String(o.days),
+  label: o.label,
+}))
 
 // ============================================================
-// Stats Cards
+// Stats Cards — 动态标签
 // ============================================================
-const statCards = [
-  { id: "statCal", label: "本周平均热量", icon: Flame, color: "#FF5722", field: "avg_daily_energy_kcal" as const, unit: "kcal", decimals: 0 },
-  { id: "statPro", label: "本周平均蛋白质", icon: Beef, color: "#E91E63", field: "total_protein_g" as const, unit: "g", decimals: 1 },
-  { id: "statFat", label: "本周平均脂肪", icon: Droplets, color: "#FF9800", field: "total_fat_g" as const, unit: "g", decimals: 1 },
-  { id: "statCarb", label: "本周平均碳水", icon: Wheat, color: "#4CAF50", field: "total_carbohydrate_g" as const, unit: "g", decimals: 1 },
-]
+function StatsGrid({ stats, days }: { stats: DashboardStats | null; days: number }) {
+  const periodLabel = periodOptions.find(o => o.days === days)?.label || `近${days}天`
 
-function StatsGrid({ stats }: { stats: DashboardStats | null }) {
+  const statCards = [
+    { id: "statCal", label: `${periodLabel}平均热量`, icon: Flame, color: "#FF5722", field: "avg_daily_energy_kcal" as const, unit: "kcal", decimals: 0 },
+    { id: "statPro", label: `${periodLabel}平均蛋白质`, icon: Beef, color: "#E91E63", field: "total_protein_g" as const, unit: "g", decimals: 1 },
+    { id: "statFat", label: `${periodLabel}平均脂肪`, icon: Droplets, color: "#FF9800", field: "total_fat_g" as const, unit: "g", decimals: 1 },
+    { id: "statCarb", label: `${periodLabel}平均碳水`, icon: Wheat, color: "#4CAF50", field: "total_carbohydrate_g" as const, unit: "g", decimals: 1 },
+  ]
+
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4 mb-6">
       {statCards.map((card, i) => {
@@ -155,26 +59,32 @@ function StatsGrid({ stats }: { stats: DashboardStats | null }) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: i * 0.1 }}
-            className="bg-white/80 backdrop-blur-[10px] rounded-[14px] p-5 flex items-center gap-4 shadow-[0_2px_8px_rgba(102,126,234,0.1)] border border-white/60 border-l-4 hover:-translate-y-[3px] hover:shadow-[0_12px_40px_rgba(102,126,234,0.18)] transition-all duration-300 relative overflow-hidden"
-            style={{ borderLeftColor: card.color }}
           >
-            <div
-              className="absolute -top-5 -right-5 w-15 h-15 rounded-full opacity-8"
-              style={{ background: card.color }}
-            />
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center"
-              style={{ background: `${card.color}18`, color: card.color }}
-            >
-              <Icon className="w-5 h-5" />
-            </div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-xs text-gray-500 font-medium truncate">{card.label}</span>
-              <span className="text-lg font-bold text-gray-800">
-                {value != null && value > 0 ? value.toFixed(card.decimals) : "--"}
-                <span className="text-xs font-normal text-gray-400 ml-1">{card.unit}</span>
-              </span>
-            </div>
+            <GlowCard theme="green" className="p-5 h-full">
+              <div className="flex items-center gap-4 relative overflow-hidden">
+                <div
+                  className="absolute -top-5 -right-5 w-15 h-15 rounded-full opacity-10"
+                  style={{ background: card.color }}
+                />
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: `${card.color}18`, color: card.color }}
+                >
+                  <Icon className="w-5 h-5" />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-xs text-gray-500 font-medium truncate">{card.label}</span>
+                  {value != null && value > 0 ? (
+                    <span className="text-lg font-bold text-gray-800">
+                      <AnimatedNumber value={value} decimals={card.decimals} duration={1.2} />
+                      <span className="text-xs font-normal text-gray-400 ml-1">{card.unit}</span>
+                    </span>
+                  ) : (
+                    <span className="text-lg font-bold text-gray-300">--</span>
+                  )}
+                </div>
+              </div>
+            </GlowCard>
           </motion.div>
         )
       })}
@@ -183,7 +93,7 @@ function StatsGrid({ stats }: { stats: DashboardStats | null }) {
 }
 
 // ============================================================
-// ActivityChartCard (animated bar chart — template-based)
+// ActivityChartCard — 热量趋势柱状图
 // ============================================================
 interface ChartDataPoint {
   day: string;
@@ -213,80 +123,29 @@ const barVariants = {
   },
 }
 
-function ActivityChartCard() {
-  const [selectedRange, setSelectedRange] = useState("本周")
-  const [chartData, setChartData] = useState<ChartDataPoint[]>([])
-  const [totalKcal, setTotalKcal] = useState<string>("--")
-  const [trendPct, setTrendPct] = useState<number | null>(null)
+function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days: number }) {
+  const periodLabel = periodOptions.find(o => o.days === days)?.label || `近${days}天`
 
-  const dropdownOptions = ["本周", "近14天", "近30天"]
+  const chartData: ChartDataPoint[] = useMemo(() => {
+    if (!stats?.energy_trend?.length) return []
+    const dayLabels = ["日", "一", "二", "三", "四", "五", "六"]
+    return stats.energy_trend.map((t) => ({
+      day: days <= 7 ? "周" + dayLabels[new Date(t.date).getDay()] : t.date.slice(5),
+      value: Math.round(t.value),
+    }))
+  }, [stats, days])
 
-  const rangeDays = useMemo(() => {
-    if (selectedRange === "本周") return 7
-    if (selectedRange === "近14天") return 14
-    return 30
-  }, [selectedRange])
+  const totalKcal = chartData.reduce((a, b) => a + b.value, 0)
+  const totalStr = totalKcal > 0 ? totalKcal.toLocaleString() : "0"
 
-  useEffect(() => {
-    let cancelled = false
-
-    async function fetchData() {
-      try {
-        const d = await apiGet<RecentMeal[]>(`/dashboard/recent-meals?limit=${Math.min(rangeDays * 5, 100)}`)
-        if (d.code !== 0 || !d.data?.length) {
-          setChartData([])
-          setTotalKcal("--")
-          setTrendPct(null)
-          return
-        }
-
-        // Aggregate by day
-        const dayMap: Record<string, number> = {}
-        d.data.forEach((m) => {
-          const date = (m.created_at || "").split("T")[0]
-          if (!date) return
-          dayMap[date] = (dayMap[date] || 0) + (m.cooked_energy_kcal || 0)
-        })
-
-        // Generate date range
-        const dates: string[] = []
-        const today = new Date()
-        for (let i = rangeDays - 1; i >= 0; i--) {
-          const dt = new Date(today)
-          dt.setDate(dt.getDate() - i)
-          dates.push(dt.toISOString().split("T")[0])
-        }
-
-        const dayLabels = ["日", "一", "二", "三", "四", "五", "六"]
-        const data: ChartDataPoint[] = dates.map((date) => ({
-          day: rangeDays <= 7 ? "周" + dayLabels[new Date(date).getDay()] : date.slice(5),
-          value: Math.round(dayMap[date] || 0),
-        }))
-
-        if (cancelled) return
-        setChartData(data)
-
-        const total = data.reduce((a, b) => a + b.value, 0)
-        setTotalKcal(total > 0 ? total.toLocaleString() : "0")
-
-        const mid = Math.floor(data.length / 2)
-        const firstHalf = data.slice(0, mid).reduce((a, b) => a + b.value, 0) / Math.max(mid, 1)
-        const secondHalf = data.slice(mid).reduce((a, b) => a + b.value, 0) / Math.max(data.length - mid, 1)
-        if (firstHalf > 0) {
-          setTrendPct(((secondHalf - firstHalf) / firstHalf) * 100)
-        } else {
-          setTrendPct(null)
-        }
-      } catch {
-        setChartData([])
-        setTotalKcal("--")
-        setTrendPct(null)
-      }
-    }
-
-    fetchData()
-    return () => { cancelled = true }
-  }, [rangeDays])
+  const trendPct = useMemo(() => {
+    if (chartData.length < 2) return null
+    const mid = Math.floor(chartData.length / 2)
+    const firstHalf = chartData.slice(0, mid).reduce((a, b) => a + b.value, 0) / Math.max(mid, 1)
+    const secondHalf = chartData.slice(mid).reduce((a, b) => a + b.value, 0) / Math.max(chartData.length - mid, 1)
+    if (firstHalf > 0) return ((secondHalf - firstHalf) / firstHalf) * 100
+    return null
+  }, [chartData])
 
   const maxValue = useMemo(
     () => chartData.reduce((max, item) => (item.value > max ? item.value : max), 0),
@@ -298,43 +157,16 @@ function ActivityChartCard() {
   return (
     <Card className={cn("w-full border-0 shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white/92 backdrop-blur-[12px]")}>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base font-bold flex items-center gap-2">
-            <span className="text-lg">📈</span> 近{rangeDays}天热量趋势
-          </CardTitle>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="flex items-center gap-1 text-sm"
-                aria-haspopup="true"
-              >
-                {selectedRange}
-                <ChevronDown className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {dropdownOptions.map((option) => (
-                <DropdownMenuItem
-                  key={option}
-                  onSelect={() => setSelectedRange(option)}
-                  className={cn(option === selectedRange && "font-semibold text-[#667eea]")}
-                >
-                  {option}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <CardTitle className="text-base font-bold flex items-center gap-2">
+          <span className="text-lg">📈</span> {periodLabel}热量趋势
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
-          {/* Total Value */}
           <div className="flex flex-col">
-            <p className="text-5xl font-bold tracking-tighter text-foreground">
-              {totalKcal}
-            </p>
+            <GradientText className="text-5xl font-bold tracking-tighter">
+              {totalStr}
+            </GradientText>
             <CardDescription className="flex items-center gap-1 mt-1">
               {trendPct != null ? (
                 <>
@@ -354,9 +186,8 @@ function ActivityChartCard() {
             </CardDescription>
           </div>
 
-          {/* Bar Chart */}
           <motion.div
-            key={selectedRange}
+            key={`chart-${days}`}
             className="flex h-28 w-full items-end justify-between gap-2"
             variants={chartVariants}
             initial="hidden"
@@ -373,7 +204,7 @@ function ActivityChartCard() {
                   role="presentation"
                 >
                   <motion.div
-                    className="w-full rounded-md bg-gradient-to-t from-[#764ba2] to-[#667eea]"
+                    className="w-full rounded-md bg-gradient-to-t from-[#16a34a] to-[#4ade80]"
                     style={{
                       height: `${maxValue > 0 ? (item.value / maxValue) * 100 : 0}%`,
                     }}
@@ -394,63 +225,330 @@ function ActivityChartCard() {
 }
 
 // ============================================================
+// NutrientDistribution — 营养素分布环形图
+// ============================================================
+function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
+  const dist = stats?.nutrient_distribution
+  const items = [
+    { label: "蛋白质", pct: dist?.protein_pct ?? 0, color: "#E91E63", icon: Beef },
+    { label: "脂肪", pct: dist?.fat_pct ?? 0, color: "#FF9800", icon: Droplets },
+    { label: "碳水", pct: dist?.carb_pct ?? 0, color: "#4CAF50", icon: Wheat },
+  ]
+  const total = items.reduce((a, b) => a + b.pct, 0) || 1
+
+  const radius = 60
+  const circumference = 2 * Math.PI * radius
+  let offset = 0
+
+  return (
+    <Card className={cn("w-full border-0 shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white/92 backdrop-blur-[12px]")}>
+      <CardHeader>
+        <CardTitle className="text-base font-bold flex items-center gap-2">
+          <PieChart className="h-5 w-5 text-green-500" /> 营养素分布
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-6">
+          <div className="relative flex-shrink-0">
+            <svg width="160" height="160" viewBox="0 0 160 160" className="-rotate-90">
+              {items.map((item, i) => {
+                const dash = (item.pct / total) * circumference
+                const circle = (
+                  <circle key={i} cx="80" cy="80" r={radius} fill="none"
+                    stroke={item.color} strokeWidth="20"
+                    strokeDasharray={`${dash} ${circumference - dash}`}
+                    strokeDashoffset={-offset} strokeLinecap="round" />
+                )
+                offset += dash
+                return circle
+              })}
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-2xl font-bold text-gray-800">{stats?.total_meals ?? 0}</span>
+              <span className="text-xs text-gray-400">总餐次</span>
+            </div>
+          </div>
+          <div className="flex-1 space-y-3">
+            {items.map((item) => {
+              const Icon = item.icon
+              return (
+                <div key={item.label} className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${item.color}18` }}>
+                    <Icon className="w-4 h-4" style={{ color: item.color }} />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-600">{item.label}</span>
+                      <span className="font-semibold text-gray-800">{item.pct.toFixed(0)}%</span>
+                    </div>
+                    <div className="mt-1 h-1.5 rounded-full bg-gray-100">
+                      <div className="h-full rounded-full" style={{ width: `${item.pct}%`, background: item.color }} />
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ============================================================
+// MealDetailCard — 餐食详情卡片（类似食物库的 3D 卡片）
+// ============================================================
+function MealDetailCard({ meal, onClose }: { meal: RecentMeal; onClose: () => void }) {
+  const cardRef = useRef<HTMLDivElement>(null)
+  const cc = cookingColor(meal.cooking_method)
+  const methodLabel = meal.cooking_method_label || meal.cooking_method || ""
+
+  const onMove = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const card = cardRef.current; if (!card) return
+    const { left, top, width, height } = card.getBoundingClientRect()
+    const rx = ((e.clientY - top - height / 2) / height) * 30
+    const ry = ((e.clientX - left - width / 2) / width) * -30
+    card.style.transform = `rotateX(${rx}deg) rotateY(${ry}deg) scale(1.04)`
+  }
+  const onLeave = () => { const el = cardRef.current; if (el) el.style.transform = "rotateX(0deg) rotateY(0deg) scale(1)" }
+
+  const names = meal.ingredient_names?.length ? meal.ingredient_names : meal.ingredients
+  const weights = meal.raw_weights_g || []
+
+  const detailMetrics = [
+    { label: "钠", value: meal.cooked_sodium_mg, unit: "mg", icon: "🧂" },
+    { label: "胆固醇", value: meal.cooked_cholesterol_mg, unit: "mg", icon: "🩸" },
+    { label: "维生素C", value: meal.cooked_vitamin_c_mg, unit: "mg", icon: "🍋" },
+    { label: "钙", value: meal.cooked_calcium_mg, unit: "mg", icon: "🦴" },
+    { label: "铁", value: meal.cooked_iron_mg, unit: "mg", icon: "⚡" },
+    { label: "钾", value: meal.cooked_potassium_mg, unit: "mg", icon: "🫀" },
+  ].filter((m) => m.value != null && m.value > 0)
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-4 py-8" onClick={onClose}>
+      <div className="w-full max-w-2xl" style={{ perspective: "1000px" }} onClick={e => e.stopPropagation()}>
+        <div ref={cardRef} onMouseMove={onMove} onMouseLeave={onLeave}
+          className="rounded-3xl border bg-white p-7 shadow-2xl transition-transform duration-200 ease-out"
+          style={{ borderColor: cc.from, transformStyle: "preserve-3d" }}>
+          <div className="pointer-events-none absolute inset-0 rounded-3xl bg-[linear-gradient(to_right,#00000006_1px,transparent_1px),linear-gradient(to_bottom,#00000006_1px,transparent_1px)] bg-[size:32px_32px] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)]" />
+
+          <button type="button" onClick={onClose} className="absolute right-4 top-4 z-20 rounded-full p-2 text-gray-400 hover:bg-gray-100 transition-colors" style={{ transform: "translateZ(100px)" }}><X className="h-5 w-5" /></button>
+
+          {/* 标题 + 烹饪方式标签 */}
+          <div style={{ transform: "translateZ(60px)" }} className="relative z-10 mt-2 flex flex-wrap items-center justify-center gap-3">
+            <h2 className="text-3xl font-bold tracking-tight text-gray-900">{names.join("、")}</h2>
+            <LiquidGlassButton color={cc.from} className="!px-4 !py-1.5 !text-sm">
+              <ChefHat className="h-3 w-3 mr-1" /> {methodLabel}
+            </LiquidGlassButton>
+          </div>
+
+          {/* 食材明细 + 重量 + 烹饪时间 */}
+          <div style={{ transform: "translateZ(40px)" }} className="relative z-10 mt-3 text-center">
+            <div className="flex flex-wrap justify-center gap-2">
+              {names.map((name, i) => (
+                <span key={i} className="rounded-full px-3 py-1 text-sm font-medium" style={{ backgroundColor: cc.bg, color: cc.text }}>
+                  {name}{weights[i] != null ? ` ${Math.round(weights[i])}g` : ""}
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center justify-center gap-3">
+              <p className="text-sm text-gray-500">
+                {new Date(meal.created_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </p>
+            </div>
+          </div>
+
+          {/* 核心营养素 — 数值用主题色 */}
+          <div style={{ transform: "translateZ(35px)" }} className="relative z-10 mt-5 grid grid-cols-4 gap-2">
+            {[["🔥","热量",metric(meal.cooked_energy_kcal),"kcal"],["💪","蛋白质",metric(meal.cooked_protein_g),"g"],["🧈","脂肪",metric(meal.cooked_fat_g),"g"],["🍚","碳水",metric(meal.cooked_carbohydrate_g),"g"]]
+              .map(([icon, label, value, unit]) => (
+                <div key={String(label)} className="rounded-xl px-2 py-3 text-center shadow-sm" style={{ backgroundColor: cc.bg }}>
+                  <div className="mb-1 text-xl">{icon}</div>
+                  <div className="text-lg font-extrabold" style={{ color: cc.text }}>{value}</div>
+                  <div className="text-[10px] text-gray-500">{label} ({unit})</div>
+                </div>))}
+          </div>
+
+          {/* 详细营养素 — 类似食物库的表格 */}
+          {detailMetrics.length > 0 && (
+            <div className="relative z-10 mt-4 pt-3" style={{ transform: "translateZ(20px)" }}>
+              <div className="overflow-hidden rounded-xl border" style={{ borderColor: cc.from }}>
+                <table className="min-w-full text-sm">
+                  <thead style={{ backgroundImage: `linear-gradient(to right, ${cc.from}, ${cc.to})` }} className="text-white">
+                    <tr><th className="px-4 py-2 text-left font-medium">营养素</th><th className="px-4 py-2 text-left font-medium">含量</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {detailMetrics.map((m) => (
+                      <tr key={m.label}>
+                        <td className="px-4 py-2 text-gray-700">{m.icon} {m.label}</td>
+                        <td className="px-4 py-2 font-medium" style={{ color: cc.text }}>{metric(m.value)} {m.unit}</td>
+                      </tr>))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// RecentMealsList — 最近用餐记录（可点击查看详情）
+// ============================================================
+function RecentMealsList({ days }: { days: number }) {
+  const [meals, setMeals] = useState<RecentMeal[]>([])
+  const [selectedMeal, setSelectedMeal] = useState<RecentMeal | null>(null)
+
+  useEffect(() => {
+    apiGet<RecentMeal[]>(`/dashboard/recent-meals?days=${days}&limit=4`).then((d) => {
+      if (d.code === 0 && d.data) setMeals(d.data)
+    }).catch(() => {})
+  }, [days])
+
+  return (
+    <>
+      <Card className={cn("w-full border-0 shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white/92 backdrop-blur-[12px]")}>
+        <CardHeader>
+          <CardTitle className="text-base font-bold flex items-center gap-2">
+            <Clock className="h-5 w-5 text-green-500" /> 最近用餐
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {meals.length === 0 ? (
+            <div className="py-8 text-center text-sm text-gray-400">暂无用餐记录</div>
+          ) : (
+            <div className="space-y-3">
+              {meals.map((meal, i) => {
+                const cc = cookingColor(meal.cooking_method)
+                const time = new Date(meal.created_at)
+                const timeStr = time.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                return (
+                  <div
+                    key={i}
+                    className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all hover:shadow-md"
+                    style={{ backgroundColor: cc.bg }}
+                    onClick={() => setSelectedMeal(meal)}
+                  >
+                    <div
+                      className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold flex-shrink-0 text-white"
+                      style={{ backgroundImage: `linear-gradient(to right, ${cc.from}, ${cc.to})` }}
+                    >
+                      <ChefHat className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-800 truncate">
+                        {meal.ingredient_names?.join("、") || meal.ingredients.join("、")}
+                      </div>
+                      <div className="text-xs text-gray-400">{timeStr} · <span style={{ color: cc.text }}>{meal.cooking_method_label || meal.cooking_method}</span></div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-sm font-bold" style={{ color: cc.text }}>{Math.round(meal.cooked_energy_kcal)}</div>
+                      <div className="text-xs text-gray-400">kcal</div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      {selectedMeal && <MealDetailCard meal={selectedMeal} onClose={() => setSelectedMeal(null)} />}
+    </>
+  )
+}
+
+// ============================================================
+// TopFoodsCard — 常吃食物排行
+// ============================================================
+function TopFoodsCard({ stats }: { stats: DashboardStats | null }) {
+  const topFoods = stats?.top_foods ?? []
+  const maxCount = Math.max(...topFoods.map(f => f.count), 1)
+
+  return (
+    <Card className={cn("w-full border-0 shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white/92 backdrop-blur-[12px]")}>
+      <CardHeader>
+        <CardTitle className="text-base font-bold flex items-center gap-2">
+          <Apple className="h-5 w-5 text-green-500" /> 常吃食物排行
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {topFoods.length === 0 ? (
+          <div className="py-8 text-center text-sm text-gray-400">暂无数据</div>
+        ) : (
+          <div className="space-y-2">
+            {topFoods.slice(0, 5).map((food, i) => (
+              <div key={food.name} className="flex items-center gap-3">
+                <span className="w-5 text-sm font-bold text-gray-400 flex-shrink-0">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="text-gray-700 truncate">{food.name}</span>
+                    <span className="text-gray-400 text-xs">{food.count}次</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-gray-100">
+                    <div className="h-full rounded-full bg-gradient-to-r from-[#667eea] to-[#764ba2]" style={{ width: `${(food.count / maxCount) * 100}%` }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ============================================================
 // Dashboard Page
 // ============================================================
 export default function DashboardPage() {
-  const navigate = useNavigate()
+  const [days, setDays] = useState(7)
   const [stats, setStats] = useState<DashboardStats | null>(null)
 
-  useEffect(() => {
-    // Auth check
-    const token = localStorage.getItem("token")
-    if (!token) {
-      navigate("/")
-      return
-    }
-
-    // Load stats
-    apiGet<DashboardStats>("/dashboard/stats").then((d) => {
+  const fetchStats = useCallback(() => {
+    apiGet<DashboardStats>(`/dashboard/stats?days=${days}`).then((d) => {
       if (d.code === 0 && d.data) setStats(d.data)
     }).catch(console.error)
-  }, [navigate])
+  }, [days])
+
+  useEffect(() => {
+    fetchStats()
+  }, [fetchStats])
+
+  const selectedPeriod = periodOptions.find(o => o.days === days) || periodOptions[0]
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[radial-gradient(120%_100%_at_0%_0%,rgba(160,180,255,0.65)_0%,rgba(200,190,240,0.52)_35%,rgba(232,222,248,0.42)_60%,rgba(215,208,245,0.55)_100%)] bg-fixed">
-      <DashboardSidebar />
+    <AppShell title="仪表盘" titleIcon={<BarChart3 className="w-6 h-6 text-green-600" />} theme="green">
+      {/* 全局时间范围选择器 */}
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-lg font-bold text-gray-700">
+          {selectedPeriod.label}数据概览
+        </h2>
+        <AnimatedDropdown
+          options={periodDropdownOptions}
+          value={String(days)}
+          onChange={(v) => setDays(Number(v))}
+          theme="green"
+          icon={<Clock className="h-4 w-4" />}
+          size="sm"
+        />
+      </div>
 
-      {/* Main */}
-      <main className="ml-60 flex-1 p-7 h-screen max-w-[calc(100%-240px)] relative z-1 overflow-y-auto">
-        <motion.div
-          initial={{ opacity: 0, x: 12 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="bg-[radial-gradient(ellipse_at_20%_0%,rgba(102,126,234,0.14)_0%,transparent_55%),radial-gradient(ellipse_at_80%_100%,rgba(118,75,162,0.11)_0%,transparent_55%)] backdrop-blur-[16px] saturate-[1.3] rounded-[20px] border border-[rgba(200,195,235,0.35)] shadow-[0_8px_32px_rgba(102,126,234,0.1),inset_0_1px_0_rgba(255,255,255,0.4)] p-7 min-h-full relative"
-        >
-          {/* Decorative light blobs */}
-          <div className="absolute -top-15 -right-10 w-50 h-50 bg-[radial-gradient(circle,rgba(102,126,234,0.09)_0%,transparent_70%)] rounded-full pointer-events-none animate-[lightFloat_8s_ease-in-out_infinite]" />
-          <div className="absolute -bottom-20 -left-8 w-45 h-45 bg-[radial-gradient(circle,rgba(118,75,162,0.07)_0%,transparent_70%)] rounded-full pointer-events-none animate-[lightFloat_10s_ease-in-out_infinite_reverse]" />
+      {/* 统计卡片 */}
+      <StatsGrid stats={stats} days={days} />
 
-          {/* Top bar */}
-          <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
-            <h3 className="text-[22px] text-gray-800 font-bold flex items-center gap-2">
-              <BarChart3 className="w-6 h-6 text-[#667eea]" /> 仪表盘
-            </h3>
-          </div>
+      {/* 热量趋势 + 营养分布 */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        <ActivityChartCard stats={stats} days={days} />
+        <NutrientDistribution stats={stats} />
+      </div>
 
-          {/* Stats */}
-          <StatsGrid stats={stats} />
-
-          {/* Chart */}
-          <ActivityChartCard />
-        </motion.div>
-      </main>
-
-      <style>{`
-        @keyframes lightFloat {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          50% { transform: translate(15px, -10px) scale(1.1); }
-        }
-      `}</style>
-    </div>
+      {/* 最近用餐 + 食物排行 */}
+      <div className="grid gap-5 lg:grid-cols-2 mt-5">
+        <RecentMealsList days={days} />
+        <TopFoodsCard stats={stats} />
+      </div>
+    </AppShell>
   )
 }

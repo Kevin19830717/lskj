@@ -19,6 +19,7 @@ type SummaryService struct {
 	summaryRepo    *repository.SummaryRepository
 	embedRepo      *repository.EmbeddingRepository
 	embeddingSvc   *EmbeddingService
+	foodRepo       *repository.FoodRepository
 	cfg            *config.Config
 }
 
@@ -27,6 +28,7 @@ func NewSummaryService(
 	summaryRepo *repository.SummaryRepository,
 	embedRepo *repository.EmbeddingRepository,
 	embeddingSvc *EmbeddingService,
+	foodRepo *repository.FoodRepository,
 	cfg *config.Config,
 ) *SummaryService {
 	return &SummaryService{
@@ -34,6 +36,7 @@ func NewSummaryService(
 		summaryRepo:  summaryRepo,
 		embedRepo:    embedRepo,
 		embeddingSvc: embeddingSvc,
+		foodRepo:     foodRepo,
 		cfg:          cfg,
 	}
 }
@@ -75,7 +78,7 @@ func (s *SummaryService) GenerateSummary(ctx context.Context, userID int, summar
 	}
 
 	// 构建摘要洞察数据
-	insights := s.buildInsights(records, periodStart, periodEnd, summaryType)
+	insights := s.buildInsights(ctx, records, periodStart, periodEnd, summaryType)
 
 	// 创建摘要对象
 	summary := &model.AnalysisSummary{
@@ -125,7 +128,7 @@ func (s *SummaryService) GenerateSummary(ctx context.Context, userID int, summar
 }
 
 // buildInsights 从称重记录构建洞察数据
-func (s *SummaryService) buildInsights(records []*model.WeighRecord, start, end time.Time, summaryType string) map[string]interface{} {
+func (s *SummaryService) buildInsights(ctx context.Context, records []*model.WeighRecord, start, end time.Time, summaryType string) map[string]interface{} {
 	insights := make(map[string]interface{})
 	insights["period_start"] = start.Format("2006-01-02")
 	insights["period_end"] = end.Format("2006-01-02")
@@ -193,11 +196,16 @@ func (s *SummaryService) buildInsights(records []*model.WeighRecord, start, end 
 	}
 
 	// Top Foods 排行
+	nameMap, _ := s.foodRepo.GetAllNameMappings(ctx)
 	topFoods := make([]model.FoodFrequency, 0, min(10, len(foodFreq)))
 	for name, count := range foodFreq {
+		cnName := name
+		if n, ok := nameMap[name]; ok && n != "" {
+			cnName = n
+		}
 		topFoods = append(topFoods, model.FoodFrequency{
 			NameEn:       name,
-			Name:         name,
+			Name:         cnName,
 			Count:        count,
 			TotalWeightG: math.Round(foodWeight[name]*100) / 100,
 		})
@@ -295,30 +303,358 @@ func (s *SummaryService) GetSummaries(ctx context.Context, userID int, summaryTy
 func (s *SummaryService) RunArchiveJob(ctx context.Context) error {
 	logrus.Info("Starting archive job...")
 
-	// 这里实现分层归档的核心逻辑
-	// 由于完整归档需要遍历所有用户和时间范围，
-	// 下面是简化版实现框架
+	now := time.Now()
+	oneMonthAgo := now.AddDate(0, -1, 0)
+	threeMonthsAgo := now.AddDate(0, -3, 0)
+	oneYearAgo := now.AddDate(-1, 0, 0)
+	threeYearsAgo := now.AddDate(-3, 0, 0)
 
-	// Step 1: 将超过1个月的原始记录汇总为daily summaries
-	oneMonthAgo := time.Now().AddDate(0, -1, 0)
-	// 实际生产环境需要逐用户处理，这里展示核心流程
+	// Step 1: 原始称重记录 > 1月 -> 聚合为日度汇总
+	if err := s.archiveRawToDaily(ctx, oneMonthAgo); err != nil {
+		logrus.WithError(err).Error("Failed to archive raw -> daily")
+	}
 
-	// Step 2: 将超过3个月的daily summaries合并为weekly summaries
-	threeMonthsAgo := time.Now().AddDate(0, -3, 0)
+	// Step 2: 日度汇总 > 3月 -> 聚合为周度汇总
+	if err := s.archiveDailyToWeekly(ctx, threeMonthsAgo); err != nil {
+		logrus.WithError(err).Error("Failed to archive daily -> weekly")
+	}
 
-	// Step 3: 将超过1年的weekly summaries合并为monthly summaries
-	oneYearAgo := time.Now().AddDate(-1, 0, 0)
+	// Step 3: 周度汇总 > 1年 -> 聚合为月度汇总
+	if err := s.archiveWeeklyToMonthly(ctx, oneYearAgo); err != nil {
+		logrus.WithError(err).Error("Failed to archive weekly -> monthly")
+	}
 
-	// Step 4: 将超过3年的monthly summaries合并为yearly summaries
-	threeYearsAgo := time.Now().AddDate(-3, 0, 0)
+	// Step 4: 月度汇总 > 3年 -> 聚合为年度汇总
+	if err := s.archiveMonthlyToYearly(ctx, threeYearsAgo); err != nil {
+		logrus.WithError(err).Error("Failed to archive monthly -> yearly")
+	}
 
-	logrus.Info("Archive job completed", logrus.Fields{
-		"daily_threshold":  oneMonthAgo,
-		"weekly_threshold": threeMonthsAgo,
-		"monthly_threshold": oneYearAgo,
-		"yearly_threshold":  threeYearsAgo,
-	})
+	logrus.Info("Archive job completed")
 	return nil
+}
+
+// archiveRawToDaily 将超过1个月的原始称重记录聚合为日度汇总
+func (s *SummaryService) archiveRawToDaily(ctx context.Context, threshold time.Time) error {
+	// 获取需要归档的用户列表（有超过1个月未归档记录的用户）
+	users, err := s.mealRepo.GetUsersWithRecordsBefore(ctx, threshold)
+	if err != nil {
+		return fmt.Errorf("failed to get users for raw->daily archive: %w", err)
+	}
+
+	for _, userID := range users {
+		// 获取该用户在归档阈值之前的记录，按天聚合
+		records, err := s.mealRepo.QueryRecordsByDateRange(ctx, userID, threshold.AddDate(-1, 0, 0), threshold)
+		if err != nil {
+			logrus.WithError(err).Warnf("Failed to query records for user %d", userID)
+			continue
+		}
+
+		// 按天分组聚合
+		dayMap := make(map[string][]*model.WeighRecord)
+		for _, r := range records {
+			date := r.CreatedAt.Format("2006-01-02")
+			dayMap[date] = append(dayMap[date], r)
+		}
+
+		// 为每一天创建 daily summary
+		for dateStr, dayRecords := range dayMap {
+			date, _ := time.Parse("2006-01-02", dateStr)
+			// 检查是否已存在
+			existing, _ := s.summaryRepo.FindByUserDateType(ctx, userID, date, "daily")
+			if existing != nil {
+				continue // 已有日度汇总，跳过
+			}
+
+			insights := s.buildInsights(ctx, dayRecords, date, date.AddDate(0, 0, 1), "daily")
+			summary := &model.AnalysisSummary{
+				UserID:      userID,
+				SummaryDate: date,
+				SummaryType: "daily",
+				Source:      "auto",
+				Insights:    insights,
+			}
+			if err := s.summaryRepo.Create(ctx, summary); err != nil {
+				logrus.WithError(err).Warnf("Failed to save daily summary for user %d date %s", userID, dateStr)
+			}
+		}
+
+		logrus.Infof("Archived raw -> daily for user %d: %d days", userID, len(dayMap))
+	}
+	return nil
+}
+
+// archiveDailyToWeekly 将超过3个月的日度汇总聚合为周度汇总
+func (s *SummaryService) archiveDailyToWeekly(ctx context.Context, threshold time.Time) error {
+	users, err := s.mealRepo.GetUsersWithSummariesBefore(ctx, threshold, "daily")
+	if err != nil {
+		return fmt.Errorf("failed to get users for daily->weekly archive: %w", err)
+	}
+
+	for _, userID := range users {
+		dailySummaries, err := s.summaryRepo.FindByUserAndType(ctx, userID, "daily", 100)
+		if err != nil {
+			continue
+		}
+
+		// 过滤出超过阈值的
+		var oldSummaries []*model.AnalysisSummary
+		for _, sum := range dailySummaries {
+			if sum.SummaryDate.Before(threshold) {
+				oldSummaries = append(oldSummaries, sum)
+			}
+		}
+		if len(oldSummaries) == 0 {
+			continue
+		}
+
+		// 按周分组
+		weekMap := make(map[string][]*model.AnalysisSummary)
+		for _, sum := range oldSummaries {
+			weekday := sum.SummaryDate.Weekday()
+			daysSinceMonday := (int(weekday) + 6) % 7
+			weekStart := sum.SummaryDate.AddDate(0, 0, -daysSinceMonday)
+			weekKey := weekStart.Format("2006-01-02")
+			weekMap[weekKey] = append(weekMap[weekKey], sum)
+		}
+
+		for weekKey, weekSummaries := range weekMap {
+			weekStart, _ := time.Parse("2006-01-02", weekKey)
+			existing, _ := s.summaryRepo.FindByUserDateType(ctx, userID, weekStart, "weekly")
+			if existing != nil {
+				continue
+			}
+
+			// 聚合这一周的所有日度数据
+			mergedInsights := s.mergeInsights(ctx, weekSummaries, "weekly")
+			summary := &model.AnalysisSummary{
+				UserID:      userID,
+				SummaryDate: weekStart,
+				SummaryType: "weekly",
+				Source:      "auto",
+				Insights:    mergedInsights,
+			}
+			if err := s.summaryRepo.Create(ctx, summary); err != nil {
+				logrus.WithError(err).Warnf("Failed to save weekly summary for user %d week %s", userID, weekKey)
+			}
+		}
+
+		logrus.Infof("Archived daily -> weekly for user %d: %d weeks", userID, len(weekMap))
+	}
+	return nil
+}
+
+// archiveWeeklyToMonthly 将超过1年的周度汇总聚合为月度汇总
+func (s *SummaryService) archiveWeeklyToMonthly(ctx context.Context, threshold time.Time) error {
+	users, err := s.mealRepo.GetUsersWithSummariesBefore(ctx, threshold, "weekly")
+	if err != nil {
+		return fmt.Errorf("failed to get users for weekly->monthly archive: %w", err)
+	}
+
+	for _, userID := range users {
+		weeklySummaries, err := s.summaryRepo.FindByUserAndType(ctx, userID, "weekly", 100)
+		if err != nil {
+			continue
+		}
+
+		var oldSummaries []*model.AnalysisSummary
+		for _, sum := range weeklySummaries {
+			if sum.SummaryDate.Before(threshold) {
+				oldSummaries = append(oldSummaries, sum)
+			}
+		}
+		if len(oldSummaries) == 0 {
+			continue
+		}
+
+		// 按月分组
+		monthMap := make(map[string][]*model.AnalysisSummary)
+		for _, sum := range oldSummaries {
+			monthStart := time.Date(sum.SummaryDate.Year(), sum.SummaryDate.Month(), 1, 0, 0, 0, 0, sum.SummaryDate.Location())
+			monthKey := monthStart.Format("2006-01")
+			monthMap[monthKey] = append(monthMap[monthKey], sum)
+		}
+
+		for monthKey, monthSummaries := range monthMap {
+			monthStart, _ := time.Parse("2006-01", monthKey)
+			existing, _ := s.summaryRepo.FindByUserDateType(ctx, userID, monthStart, "monthly")
+			if existing != nil {
+				continue
+			}
+
+			mergedInsights := s.mergeInsights(ctx, monthSummaries, "monthly")
+			summary := &model.AnalysisSummary{
+				UserID:      userID,
+				SummaryDate: monthStart,
+				SummaryType: "monthly",
+				Source:      "auto",
+				Insights:    mergedInsights,
+			}
+			if err := s.summaryRepo.Create(ctx, summary); err != nil {
+				logrus.WithError(err).Warnf("Failed to save monthly summary for user %d month %s", userID, monthKey)
+			}
+		}
+
+		logrus.Infof("Archived weekly -> monthly for user %d: %d months", userID, len(monthMap))
+	}
+	return nil
+}
+
+// archiveMonthlyToYearly 将超过3年的月度汇总聚合为年度汇总
+func (s *SummaryService) archiveMonthlyToYearly(ctx context.Context, threshold time.Time) error {
+	users, err := s.mealRepo.GetUsersWithSummariesBefore(ctx, threshold, "monthly")
+	if err != nil {
+		return fmt.Errorf("failed to get users for monthly->yearly archive: %w", err)
+	}
+
+	for _, userID := range users {
+		monthlySummaries, err := s.summaryRepo.FindByUserAndType(ctx, userID, "monthly", 100)
+		if err != nil {
+			continue
+		}
+
+		var oldSummaries []*model.AnalysisSummary
+		for _, sum := range monthlySummaries {
+			if sum.SummaryDate.Before(threshold) {
+				oldSummaries = append(oldSummaries, sum)
+			}
+		}
+		if len(oldSummaries) == 0 {
+			continue
+		}
+
+		// 按年分组
+		yearMap := make(map[int][]*model.AnalysisSummary)
+		for _, sum := range oldSummaries {
+			yearMap[sum.SummaryDate.Year()] = append(yearMap[sum.SummaryDate.Year()], sum)
+		}
+
+		for year, yearSummaries := range yearMap {
+			yearStart := time.Date(year, 1, 1, 0, 0, 0, 0, time.Now().Location())
+			existing, _ := s.summaryRepo.FindByUserDateType(ctx, userID, yearStart, "yearly")
+			if existing != nil {
+				continue
+			}
+
+			mergedInsights := s.mergeInsights(ctx, yearSummaries, "yearly")
+			summary := &model.AnalysisSummary{
+				UserID:      userID,
+				SummaryDate: yearStart,
+				SummaryType: "yearly",
+				Source:      "auto",
+				Insights:    mergedInsights,
+			}
+			if err := s.summaryRepo.Create(ctx, summary); err != nil {
+				logrus.WithError(err).Warnf("Failed to save yearly summary for user %d year %d", userID, year)
+			}
+		}
+
+		logrus.Infof("Archived monthly -> yearly for user %d: %d years", userID, len(yearMap))
+	}
+	return nil
+}
+
+// mergeInsights 将多条摘要的 insights 合并
+func (s *SummaryService) mergeInsights(ctx context.Context, summaries []*model.AnalysisSummary, targetType string) map[string]interface{} {
+	insights := make(map[string]interface{})
+
+	var totalEnergy, totalProtein, totalFat, totalCarb float64
+	var totalMeals int
+	foodFreq := make(map[string]int)
+	var periodStart, periodEnd string
+
+	for i, sum := range summaries {
+		ins := sum.Insights
+		if ins == nil {
+			continue
+		}
+		if v, ok := ins["total_energy_kcal"].(float64); ok {
+			totalEnergy += v
+		}
+		if v, ok := ins["total_protein_g"].(float64); ok {
+			totalProtein += v
+		}
+		if v, ok := ins["total_fat_g"].(float64); ok {
+			totalFat += v
+		}
+		if v, ok := ins["total_carbohydrate_g"].(float64); ok {
+			totalCarb += v
+		}
+		if v, ok := ins["total_meals"].(float64); ok {
+			totalMeals += int(v)
+		} else if v, ok := ins["total_meals"].(int); ok {
+			totalMeals += v
+		}
+		// 合并高频食物（优先用英文名作为 key，避免中英文混用）
+		if tf, ok := ins["top_foods"].([]interface{}); ok {
+			for _, item := range tf {
+				if m, ok := item.(map[string]interface{}); ok {
+					nameEn := ""
+					if n, ok := m["name_en"].(string); ok && n != "" {
+						nameEn = n
+					} else if n, ok := m["name"].(string); ok {
+						nameEn = n
+					}
+					if nameEn != "" {
+						if cnt, ok := m["count"].(float64); ok {
+							foodFreq[nameEn] += int(cnt)
+						}
+					}
+				}
+			}
+		}
+		if i == 0 {
+			if ps, ok := ins["period_start"].(string); ok {
+				periodStart = ps
+			}
+		}
+		if pe, ok := ins["period_end"].(string); ok {
+			periodEnd = pe
+		}
+	}
+
+	insights["period_start"] = periodStart
+	insights["period_end"] = periodEnd
+	insights["total_meals"] = totalMeals
+	insights["total_energy_kcal"] = math.Round(totalEnergy*100) / 100
+	insights["total_protein_g"] = math.Round(totalProtein*100) / 100
+	insights["total_fat_g"] = math.Round(totalFat*100) / 100
+	insights["total_carbohydrate_g"] = math.Round(totalCarb*100) / 100
+
+	// 计算日均
+	durationDays := 1.0
+	switch targetType {
+	case "weekly":
+		durationDays = 7
+	case "monthly":
+		durationDays = 30
+	case "yearly":
+		durationDays = 365
+	}
+	if len(summaries) > 0 {
+		durationDays = float64(len(summaries)) * durationDays / float64(len(summaries))
+	}
+	if durationDays > 0 {
+		insights["avg_daily_energy_kcal"] = math.Round((totalEnergy/durationDays)*100) / 100
+	}
+
+	// Top foods
+	nameMap, _ := s.foodRepo.GetAllNameMappings(ctx)
+	topFoods := make([]model.FoodFrequency, 0, 10)
+	for name, count := range foodFreq {
+		cnName := name
+		if n, ok := nameMap[name]; ok && n != "" {
+			cnName = n
+		}
+		topFoods = append(topFoods, model.FoodFrequency{NameEn: name, Name: cnName, Count: count})
+	}
+	sortFoods(topFoods)
+	if len(topFoods) > 10 {
+		topFoods = topFoods[:10]
+	}
+	insights["top_foods"] = topFoods
+	insights["recommendations"] = s.generateRecommendations(totalEnergy, totalProtein, totalFat, totalCarb, durationDays)
+
+	return insights
 }
 
 // sortFoods 按频率排序（简单冒泡排序）

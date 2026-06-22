@@ -17,7 +17,9 @@ import (
 type UserService struct {
 	userRepo     interface {
 		FindByPhone(ctx context.Context, phone string) (*model.User, error)
+		FindByID(ctx context.Context, userID int64) (*model.User, error)
 		Create(ctx context.Context, req *model.RegisterRequest) (*model.User, error)
+		UpdateNickname(ctx context.Context, userID int64, nickname string) error
 	}
 	mealRepo     interface {
 		CountRecordsInRange(ctx context.Context, userID int, start, end time.Time) (int64, error)
@@ -30,7 +32,9 @@ type UserService struct {
 func NewUserService(
 	userRepo interface {
 		FindByPhone(ctx context.Context, phone string) (*model.User, error)
+		FindByID(ctx context.Context, userID int64) (*model.User, error)
 		Create(ctx context.Context, req *model.RegisterRequest) (*model.User, error)
+		UpdateNickname(ctx context.Context, userID int64, nickname string) error
 	},
 	mealRepo interface {
 		CountRecordsInRange(ctx context.Context, userID int, start, end time.Time) (int64, error)
@@ -49,6 +53,17 @@ func NewUserService(
 // GetProfile 获取用户画像
 func (s *UserService) GetProfile(ctx context.Context, userID int) (*model.UserProfile, error) {
 	profile := &model.UserProfile{UserID: userID}
+	user, err := s.userRepo.FindByID(ctx, int64(userID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user basic info: %w", err)
+	}
+	if user != nil {
+		profile.Nickname = user.Nickname
+		profile.Phone = user.Phone
+		if user.AvatarURL != nil {
+			profile.AvatarURL = *user.AvatarURL
+		}
+	}
 	query := `
 		SELECT gender, age, height_cm, weight_kg, health_goal, allergies, medical_reports, created_at, updated_at
 		FROM user_profiles WHERE user_id = $1`
@@ -62,7 +77,7 @@ func (s *UserService) GetProfile(ctx context.Context, userID int) (*model.UserPr
 	var allergiesJSON, medicalReportsJSON []byte
 	var createdAt, updatedAt time.Time
 
-	err := row.Scan(
+	err = row.Scan(
 		&gender, &age, &heightCm, &weightKg,
 		&healthGoal, &allergiesJSON, &medicalReportsJSON,
 		&createdAt, &updatedAt,
@@ -125,6 +140,13 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID int, req *model.
 		req.HealthGoal, allergiesJSON)
 	if err != nil {
 		return fmt.Errorf("failed to upsert profile: %w", err)
+	}
+
+	if req.Nickname != nil {
+		nickname := *req.Nickname
+		if err := s.userRepo.UpdateNickname(ctx, int64(userID), nickname); err != nil {
+			return fmt.Errorf("failed to update nickname: %w", err)
+		}
 	}
 
 	logrus.Infof("User profile upserted for user_id=%d", userID)

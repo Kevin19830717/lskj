@@ -1,120 +1,118 @@
 """
-文本生成服务
-调用阿里云百炼 DashScope qwen-plus / qwen-vl-flash API 生成文本
+文本生成服务 — 阿里云百炼 Responses API
+使用 /compatible-mode/v1/responses 接口，支持 previous_response_id 多轮记忆
 """
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import httpx
 from config import settings
 
 logger = logging.getLogger(__name__)
 
-TEXT_GEN_URL = settings.text_generation_url
+RESPONSES_URL = settings.responses_url
+EMBEDDINGS_URL = settings.embeddings_url
 MULTIMODAL_URL = settings.multimodal_url
 HEADERS = {
     "Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}",
     "Content-Type": "application/json",
 }
 
-TIMEOUT_SECONDS = 60
+TIMEOUT_SECONDS = 120
 
 
-async def generate_text(
-    system_prompt: str,
-    user_prompt: str,
+async def call_responses_api(
+    messages: List[dict],
+    previous_response_id: Optional[str] = None,
     model: Optional[str] = None,
     temperature: float = 0.7,
-    max_tokens: int = 512,
+    max_tokens: int = 1024,
 ) -> Dict[str, Any]:
     """
-    调用 DashScope 文本生成 API (qwen-plus)
-    
+    调用 Responses API（支持 previous_response_id 多轮记忆）
+
     Args:
-        system_prompt: 系统提示词
-        user_prompt: 用户提示词
-        model: 模型名称，默认使用配置值
-        temperature: 温度参数 (0-2)
-        max_tokens: 最大输出 token 数
-    
+        messages: 消息列表 [{"role": "system", "content": "..."}, ...]
+        previous_response_id: 上一轮响应的 ID，用于自动关联上下文（7天有效）
+        model: 模型名称
+        temperature: 温度
+        max_tokens: 最大 token
+
     Returns:
-        包含 content 和 token_usage 的字典
+        {"content": str, "response_id": str, "model_used": str}
     """
     model_name = model or settings.TEXT_MODEL
-    
     payload = {
         "model": model_name,
-        "input": {
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-        },
-        "parameters": {
-            "result_format": "message",
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        },
+        "input": messages,
     }
-    
+    if previous_response_id:
+        payload["previous_response_id"] = previous_response_id
+
     last_error = None
     max_retries = 3
     for attempt in range(1, max_retries + 1):
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
-                response = await client.post(TEXT_GEN_URL, headers=HEADERS, json=payload)
-                
+                response = await client.post(RESPONSES_URL, headers=HEADERS, json=payload)
+
                 if response.status_code == 200:
                     data = response.json()
-                    output = data.get("output", {})
-                    choices = output.get("choices", [])
-                    
-                    content = choices[0]["message"]["content"] if choices else ""
+                    response_id = data.get("id", "")
+                    content = _extract_text(data)
                     usage = data.get("usage", {})
-                    
-                    token_usage = {
-                        "prompt_tokens": usage.get("input_tokens"),
-                        "completion_tokens": usage.get("output_tokens"),
-                        "total_tokens": usage.get("total_tokens"),
-                    }
-                    
+
                     logger.info(
-                        f"Text generation success: model={model_name}, "
-                        f"tokens={token_usage['total_tokens']}, "
+                        f"Responses API success: model={model_name}, "
+                        f"response_id={response_id}, "
                         f"output_length={len(content)}"
                     )
                     return {
                         "content": content,
-                        "token_usage": token_usage,
+                        "response_id": response_id,
                         "model_used": model_name,
+                        "token_usage": {
+                            "prompt_tokens": usage.get("input_tokens"),
+                            "completion_tokens": usage.get("output_tokens"),
+                            "total_tokens": usage.get("total_tokens"),
+                        },
                     }
-                
+
                 elif response.status_code == 429:
                     import asyncio
                     await asyncio.sleep(attempt * 2)
                     last_error = f"Rate limited: {response.text}"
-                    
+
                 elif response.status_code >= 500:
                     import asyncio
                     await asyncio.sleep(1)
                     last_error = f"Server error {response.status_code}: {response.text}"
-                    
+
                 else:
-                    error_msg = f"Text gen API error {response.status_code}: {response.text}"
-                    logger.error(error_msg)
-                    raise Exception(error_msg)
-                    
+                    raise Exception(f"Responses API error {response.status_code}: {response.text}")
+
         except httpx.TimeoutException:
             import asyncio
             await asyncio.sleep(3)
             last_error = "Request timeout"
-            
+
         except httpx.RequestError as e:
             import asyncio
             await asyncio.sleep(2)
             last_error = f"Request error: {e}"
 
-    raise Exception(f"Text generation failed after {max_retries} attempts. Last error: {last_error}")
+    raise Exception(f"Responses API failed after {max_retries} attempts. Last error: {last_error}")
+
+
+def _extract_text(data: dict) -> str:
+    """从 Responses API 响应中提取文本"""
+    output = data.get("output", [])
+    for item in output:
+        if item.get("type") == "message":
+            for c in item.get("content", []):
+                if c.get("type") == "output_text" and c.get("text"):
+                    return c["text"]
+    return ""
 
 
 async def generate_multimodal(
@@ -123,21 +121,8 @@ async def generate_multimodal(
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> Dict[str, Any]:
-    """
-    调用 DashScope 多模态 API (qwen-vl-flash)
-    用于图片理解和体检报告解析
-    
-    Args:
-        messages: 消息列表，格式见 DashScope 多模态文档
-        model: 模型名称
-        temperature: 温度参数
-        max_tokens: 最大 token 数
-    
-    Returns:
-        包含解析结果的字典
-    """
+    """调用多模态 API（旧版格式，用于图片理解）"""
     model_name = model or settings.VL_MODEL
-    
     payload = {
         "model": model_name,
         "input": {"messages": messages},
@@ -147,29 +132,20 @@ async def generate_multimodal(
             "max_tokens": max_tokens,
         },
     }
-    
+    mm_headers = {
+        "Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}",
+        "Content-Type": "application/json",
+    }
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
-            response = await client.post(MULTIMODAL_URL, headers=HEADERS, json=payload)
-            
+            response = await client.post(MULTIMODAL_URL, headers=mm_headers, json=payload)
             if response.status_code == 200:
                 data = response.json()
                 choices = data.get("output", {}).get("choices", [])
                 content = choices[0]["message"]["content"] if choices else ""
-                usage = data.get("usage", {})
-                
-                return {
-                    "content": content,
-                    "token_usage": {
-                        "prompt_tokens": usage.get("input_tokens"),
-                        "completion_tokens": usage.get("output_tokens"),
-                        "total_tokens": usage.get("total_tokens"),
-                    },
-                    "model_used": model_name,
-                }
+                return {"content": content, "model_used": model_name}
             else:
                 raise Exception(f"Multimodal API error {response.status_code}: {response.text}")
-                
     except httpx.TimeoutException:
         raise Exception("Multimodal API request timeout")
     except httpx.RequestError as e:

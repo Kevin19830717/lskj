@@ -71,25 +71,19 @@ func (s *RAGService) GenerateAdvice(ctx context.Context, userID int, adviceType 
 	// 5. 构建带RAG上下文的Prompt
 	prompt := s.buildRAGPrompt(summaries, similarResults, adviceType)
 
-	// 6. 调用DashScope qwen-plus生成建议
-	response, err := s.dashClient.TextGenerate(&dashscope.TextGenerationRequest{
+	// 6. 调用 DashScope Responses API 生成建议
+	response, err := s.dashClient.Responses(&dashscope.ResponsesRequest{
 		Model: s.cfg.Aliyun.TextModel,
-		Input: dashscope.TextInput{
-			Prompt: prompt,
-		},
-		Parameters: &dashscope.TextParameters{
-			Temperature:     0.7,
-			MaxTokens:       2048,
-			TopP:            0.9,
-			EnableSearch:    true,
+		Input: []dashscope.Message{
+			{Role: "system", Content: "你是一位专业的注册营养师和健康管理顾问，擅长基于数据分析给出个性化、可操作的饮食健康建议。"},
+			{Role: "user", Content: prompt},
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate advice via LLM: %w", err)
 	}
 
-	// 解析LLM返回内容
-	adviceContent := response.Output.Text
+	adviceContent := response.ExtractText()
 	if adviceContent == "" {
 		return nil, fmt.Errorf("empty advice content from LLM")
 	}

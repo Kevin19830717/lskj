@@ -1,0 +1,271 @@
+================================================================================
+  智能饮食健康秤 (lskj) — AI 项目交接文档
+  生成时间: 2026-06-17 10:34 | 当前分支: v2
+================================================================================
+
+一、项目概述
+--------------------------------------------------------------------------------
+项目名称：智能饮食健康秤（智能饮食秤 / Smart Scale）
+GitHub 仓库：https://github.com/Kevin19830717/lskj
+项目定位：AI驱动的饮食健康管理平台，包含硬件端(ESP32-P4) + Web全栈 + RAG/AI服务
+核心功能：食材称重记录、营养分析、历史数据可视化、AI健康对话、营养报告生成
+
+二、技术栈总览
+--------------------------------------------------------------------------------
+| 层级       | 技术                                      |
+|-----------|-------------------------------------------|
+| 新前端     | React 19 + TypeScript + Vite 8 + TailwindCSS v4 + Framer Motion + Radix UI(shadcn风格) + Lucide Icons + react-router-dom v7 |
+| 旧前端     | 原生 HTML/CSS/JavaScript 多页面应用        |
+| 后端API    | Go 1.22+ + Gin框架 + golang-jwt/v5 JWT认证 + pgx/pgxpool PostgreSQL驱动 + viper配置 + logrus日志 |
+| AI/RAG服务 | Python 3.10+ + FastAPI 0.115 + uvicorn + asyncpg + pgvector向量检索 + 阿里云百炼DashScope API |
+| 数据库     | PostgreSQL 16 + pgvector 扩展              |
+| 反向代理   | Nginx (系统安装版，非Docker)                |
+| 容器化     | Docker + Docker Compose 3.8                 |
+| AI能力     | 阿里云百炼: qwen-plus(文本) + qwen-vl-flash(多模态OCR) + text-embedding-v2(1536维向量) |
+
+三、目录结构速查
+--------------------------------------------------------------------------------
+/home/ubuntu/lskj/
+├── docker-compose.yml          # Docker 编排(postgres+backend+rag+nginx)
+├── start.sh                    # 生产环境一键启动
+├── start-dev.sh                # 开发模式启动(前台，彩色日志)
+├── stop.sh                     # 一键停止
+│
+├── smart-scale-backend/        # ★ 主项目：Go后端 + 两套前端
+│   ├── cmd/server/main.go      #   Go 入口
+│   ├── internal/               #   Go业务代码(35个.go文件)
+│   │   ├── handler/            #     HTTP处理器(dashboard, records, reports等)
+│   │   ├── model/              #     数据模型(MealRecord, User, Summary等)
+│   │   ├── router/             #     路由注册
+│   │   ├── service/            #     业务逻辑层
+│   │   └── repo/               #     数据访问层(pgx)
+│   ├── pkg/dashscope/          #   阿里云百炼API封装
+│   ├── configs/config.yaml     #   Go服务配置(DB连接、JWT密钥、端口8080)
+│   ├── migrations/             #   数据库迁移SQL
+│   ├── frontend/               #   【旧版】HTML原生页面(5页)
+│   │   ├── index.html          #     入口页(仅跳转用)
+│   │   ├── dashboard.html      #     → nginx 301重定向到 /dashboard (React)
+│   │   ├── records.html        #     历史记录页面
+│   │   ├── reports.html        #     营养报告页面
+│   │   ├── foods.html          #     食物库搜索页面
+│   │   ├── profile.html        #     个人中心/设置页面
+│   │   ├── css/style-v15.css   #     ★ 全局样式(v17，刚更新)
+│   │   └── js/app.js           #     ★ 公共JS(认证、侧边栏用户初始化、API封装)
+│   ├── frontend-react/         #   【新版】React SPA (当前开发重点)
+│   │   ├── src/
+│   │   │   ├── App.tsx         #     根组件: LandingPage(/) + DashboardPage(/dashboard)
+│   │   │   ├── pages/DashboardPage.tsx  # ★ 仪表盘(含可折叠侧边栏)
+│   │   │   ├── lib/api.ts      #     API工具(apiGet/apiPost)
+│   │   │   ├── lib/utils.ts    #     cn() 工具函数
+│   │   │   └── components/ui/  #     shadcn/ui 风格组件(Card/Button等)
+│   │   ├── dist/               #     Vite构建产物(★ 已构建)
+│   │   ├── vite.config.ts      #     Vite配置(proxy /api -> localhost:8080)
+│   │   └── package.json        #     依赖见下方
+│   └── server                  #   Go编译产物(已.gitignore忽略)
+│
+├── rag-service/                # ★ Python RAG/AI服务(FastAPI)
+│   ├── app.py                  #   FastAPI入口
+│   ├── routers/rag.py          #   RAG路由(4个端点)
+│   ├── services/              #   embedding/retrieval/generation/pipeline
+│   ├── prompts/                #   AI提示词模板
+│   └── requirements.txt       #   Python依赖
+│
+├── nginx/nginx.conf            # Nginx Docker部署版(备用)
+├── final.json                  # 31种食材营养数据库(JSON格式)
+├── Kevin.json                  # LightGBM训练数据(25MB,已从git移除)
+├── import_foods.py             # final.json导入PostgreSQL脚本
+
+四、前端架构详解（重要！两套系统并存）
+--------------------------------------------------------------------------------
+【关键理解】本项目有两套前端系统，通过Nginx路由分流：
+
+1️⃣ React SPA (frontend-react/dist/) — 仅处理 "/" 和 "/dashboard"
+   - "/" = LandingPage（登录/注册落地页）
+   - "/dashboard" = DashboardPage（仪表盘，带新设计的紫色侧边栏）
+   - 构建命令：cd smart-scale-backend/frontend-react && npm run build
+   - 构建产物输出到 dist/，Nginx直接serve静态文件
+
+2️⃣ 旧版 HTML 页面 (frontend/) — 处理 /records /reports /foods /profile
+   - 每页独立HTML文件，共用 css/style-v15.css 和 js/app.js
+   - 通过 <nav class="sidebar"> 内联侧边栏导航
+   - 各页有独立 data-theme 属性决定内容区颜色主题
+
+【Nginx 路由规则】(文件: /etc/nginx/sites-enabled/smart-scale.conf)
+- listen 80; server_name _;
+- root = frontend-react/dist/ (默认)
+- location = /dashboard.html → 301 /dashboard
+- location ~ ^/(records|reports|foods|profile)(\.html)?$ → root = frontend/ (旧版HTML)
+- location /css/ /js/ /images/ → root = frontend/ (旧版静态资源)
+- location /api/ → proxy_pass http://127.0.0.1:8080 (Go后端)
+- location /rag/ → proxy_pass http://127.0.0.1:8001 (RAG服务)
+- location / → try_files $uri $uri/ /index.html (SPA fallback)
+
+⚠️ 重要：侧边栏导航在两个系统中不一致！
+- React仪表盘的侧边栏点击"历史记录"等链接时使用 window.location.href = path
+  跳转到旧版HTML页面，导致用户体验断裂（样式/侧边栏完全不同）
+
+五、最近改动详情（未提交git的工作区变更）
+--------------------------------------------------------------------------------
+
+【改动1】DashboardSidebar 重构 — 文件: frontend-react/src/pages/DashboardPage.tsx
+状态：✅ 已完成代码修改 + ✅ 已 npm run build 构建 + ❌ 未 git commit
+
+改动内容：
+- 侧边栏改为受控组件，接收 props: { collapsed, onToggle }
+- 状态提升至 DashboardPage，主内容区 margin 随折叠联动
+- 新增折叠按钮(ChevronsRight图标)，右侧白色圆形按钮
+- 折叠时宽度 w-60→w-20，只显示图标不显示文字
+- 选中态高亮：黄色左边框(#FFD54F) + 渐变背景
+- 导航项新增 badge 支持（如"历史记录"显示红色数字徽章"3"）
+- 用户区域增强：展开时显示用户名+退出按钮，折叠时头像+退出图标
+- 新增导入：ChevronsRight from "lucide-react"
+
+当前侧边栏导航项：
+  /dashboard  → React SPA内 navigate()  [仪表盘]
+  /records    → window.location.href    [历史记录]
+  /reports    → window.location.href    [营养报告]
+  /foods      → window.location.href    [食物库]
+  /profile    → window.location.href    [个人中心]
+
+【改动2】旧版页面侧边栏统一 — 文件: frontend/css/style-v15.css
+状态：✅ CSS已重写为v17 + ✅ HTML引用已加?v=17版本号 + ❌ 未 git commit
+
+改动内容：
+- 侧边栏颜色从每页不同主题色 统一为紫色渐变(与React Dashboard一致)
+  --sb-dark:#2d2490 → --sb-mid1:#3730a3 → --sb-light:#667eea
+- 各页[data-theme]变量保留但仅影响内容区(card/button/table等)，不再影响侧边栏
+- Header 改为 flex 布局居中 logo+标题
+- 侧边栏选中态对齐React：黄色边框 + 渐变背景
+
+⚠️ 用户反馈此改动在浏览器中"完全没改变"，可能原因：
+1. 浏览器强缓存（需 Ctrl+Shift+R 强制刷新或清缓存）
+2. Nginx 静态资源缓存策略（location ~* \.(css|js...) 设置了 expires 30d）
+
+六、Git 状态
+--------------------------------------------------------------------------------
+分支：v2 (当前工作分支)
+远程：origin → https://github.com/Kevin19830717/lskj.git (token已在URL中)
+
+提交历史：
+  dead275  v2: 全项目更新 (最新提交)
+  f02ccdb  v1: 初始提交 - 智能称重系统
+
+未提交的修改(M)：
+  - smart-scale-backend/frontend-react/src/pages/DashboardPage.tsx
+  - smart-scale-backend/frontend/css/style-v15.css
+  - smart-scale-backend/frontend/dashboard.html (CSS版本号 v17)
+  - smart-scale-backend/frontend/foods.html (同上)
+  - smart-scale-backend/frontend/profile.html (同上)
+  - smart-scale-backend/frontend/records.html (同上)
+  - smart-scale-backend/frontend/reports.html (同上)
+
+未跟踪文件(??)：
+  - newai.txt (本文件)
+
+七、服务运行状态
+--------------------------------------------------------------------------------
+当前环境：Linux Ubuntu，直接运行(非Docker模式)
+- Go后端：应运行在 :8080 (检查: ps aux | grep smart-scale 或 lsof -i :8080)
+- RAG服务：应运行在 :8001 (检查: ps aux | grep rag-service 或 lsof -i :8001)
+- Nginx：系统安装版，监听 80 端口
+- PostgreSQL：可能在本地5432或Docker容器中
+- 前端开发服务器：未运行（生产模式使用 dist 静态文件）
+
+启动方式：
+  ./start-dev.sh    → 开发模式前台启动（推荐日常开发）
+  ./start.sh        → 生产后台启动
+  ./stop.sh         → 一键停止所有服务
+
+八、待解决问题 & 下一步建议
+--------------------------------------------------------------------------------
+
+🔴 P0 — 紧急问题：
+【1】旧页面侧边栏样式未生效
+   - style-v15.css 已改为v17但浏览器无变化
+   - 排查方向：清浏览器缓存、检查Nginx缓存头、确认CSS路径正确加载
+   - 可能需要重启Nginx: sudo nginx -s reload
+
+【2】前后端体验割裂
+   - React仪表盘(新UI) → 点击侧边栏链接 → 跳到旧HTML页面(老UI)
+   - 视觉上完全不统一，用户困惑
+   - 长期方案：将 records/reports/foods/profile 全部迁移为 React 页面
+
+🟡 P1 — 重要改进：
+【3】Git push 未完成
+   - v2 分支有新代码未推送（之前遇到 token 403 权限问题）
+   - 当前 remote URL 已含 token，可直接尝试 git push origin v2
+
+【4】DashboardPage 可继续优化
+   - 侧边栏折叠状态不持久化（刷新恢复展开）
+   - badge 数字"3"是硬编码的，应该动态获取
+   - 折叠按钮仅在桌面端有意义，移动端需要适配
+
+🟢 P2 — 锦上添花：
+【5】前端可以跑 dev server 实现热更新
+   cd smart-scale-backend/frontend-react && npm run dev
+   （注意 dev server 默认5173端口，需要单独代理或改nginx）
+
+九、关键文件索引（快速上手必读）
+--------------------------------------------------------------------------------
+# 入口/路由
+- smart-scale-backend/frontend-react/src/App.tsx          ← React路由定义
+- smart-scale-backend/internal/router/router.go            ← Go后端路由
+- /etc/nginx/sites-enabled/smart-scale.conf                 ← Nginx配置
+
+# 页面组件
+- smart-scale-backend/frontend-react/src/pages/DashboardPage.tsx  ← 仪表盘(主要开发文件)
+- smart-scale-backend/frontend/records.html                      ← 历史记录
+- smart-scale-backend/frontend/reports.html                      ← 营养报告
+- smart-scale-backend/frontend/foods.html                         ← 食物库
+- smart-scale-backend/frontend/profile.html                       ← 个人中心
+
+# 样式
+- smart-scale-backend/frontend/css/style-v15.css           ← 旧版全局样式(刚改v17)
+- smart-scale-backend/frontend-react/tailwind.config.*      ← React Tailwind配置
+
+# API & 工具
+- smart-scale-backend/frontend-react/src/lib/api.ts         ← React端API封装
+- smart-scale-backend/frontend/js/app.js                     ← 旧版JS(认证/API/侧边栏初始化)
+- smart-scale-backend/configs/config.yaml                    ← Go后端配置
+
+# 服务入口
+- smart-scale-backend/cmd/server/main.go                     ← Go后端main
+- rag-service/app.py                                          ← FastAPI入口
+- docker-compose.yml                                         ← Docker编排
+- start.sh / start-dev.sh / stop.sh                           ← 启停脚本
+
+十、常用操作备忘
+--------------------------------------------------------------------------------
+# 构建 React 前端
+cd /home/ubuntu/lskj/smart-scale-backend/frontend-react && npm run build
+
+# TypeScript 类型检查
+cd /home/ubuntu/lskj/smart-scale-backend/frontend-react && npx tsc --noEmit
+
+# 运行 Go 后端
+cd /home/ubuntu/lskj/smart-scale-backend && go run cmd/server/main.go
+
+# 查看 Git 状态
+cd /home/ubuntu/lskj && git status && git log --oneline -5
+
+# 提交 & 推送
+cd /home/ubuntu/lskj && git add -A && git commit -m "描述" && git push origin v2
+
+# 重启 Nginx
+sudo nginx -t && sudo nginx -s reload
+
+# 查看服务端口占用
+lsof -i :80 -i :8080 -i :8001 -i :5432 -i :5173
+
+# 清除浏览器缓存后测试（最重要！强制刷新 Ctrl+Shift+R）
+
+十一、用户习惯备注
+--------------------------------------------------------------------------------
+- 用户偏好中文交流
+- 用户希望一次性给出完整方案/命令，不要一条条问
+- 项目域名/IP: 直接访问本机IP即可(Nginx监听80)
+- 登录凭据: 手机号+密码(具体账号需查看数据库或询问用户)
+
+================================================================================
+                              文档结束
+================================================================================

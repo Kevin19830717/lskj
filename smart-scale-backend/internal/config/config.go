@@ -23,6 +23,18 @@ type Config struct {
 	Aliyun   AliyunConfig   `mapstructure:"aliyun"`
 	Upload   UploadConfig   `mapstructure:"upload"`
 	Cron     CronConfig     `mapstructure:"cron"`
+	Admin    AdminConfig    `mapstructure:"admin"`
+	RAG      RAGConfig      `mapstructure:"rag"`
+}
+
+// RAGConfig RAG服务地址
+type RAGConfig struct {
+	BaseURL string `mapstructure:"base_url"` // RAG service 地址，默认 http://localhost:8001
+}
+
+// AdminConfig 后台管理配置（设备预登记等）
+type AdminConfig struct {
+	Key string `mapstructure:"key"` // 调用 /admin 接口需在 X-Admin-Key 头携带此值
 }
 
 // ServerConfig HTTP服务器配置
