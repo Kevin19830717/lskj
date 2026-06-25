@@ -14,6 +14,11 @@ function getHeaders(): Record<string, string> {
   }
 }
 
+function getAuthHeader(): Record<string, string> {
+  const token = localStorage.getItem("token")
+  return token ? { Authorization: "Bearer " + token } : {}
+}
+
 function handleUnauthorized(status: number, data?: ApiResponse<unknown>) {
   if (status !== 401 && data?.code !== 401) return
   localStorage.removeItem("token")
@@ -52,6 +57,29 @@ export async function apiPut<T = unknown>(path: string, body?: unknown): Promise
   return data
 }
 
+export async function apiDelete<T = unknown>(path: string): Promise<ApiResponse<T>> {
+  const resp = await fetch(API_BASE + path, {
+    method: "DELETE",
+    headers: getHeaders(),
+  })
+  const data = (await resp.json()) as ApiResponse<T>
+  handleUnauthorized(resp.status, data)
+  return data
+}
+
+export async function apiUpload<T = unknown>(path: string, file: File, fieldName = "avatar"): Promise<ApiResponse<T>> {
+  const formData = new FormData()
+  formData.append(fieldName, file)
+  const resp = await fetch(API_BASE + path, {
+    method: "POST",
+    headers: getAuthHeader(),
+    body: formData,
+  })
+  const data = (await resp.json()) as ApiResponse<T>
+  handleUnauthorized(resp.status, data)
+  return data
+}
+
 export interface DashboardStats {
   period_days: number
   total_meals: number
@@ -62,6 +90,16 @@ export interface DashboardStats {
   energy_trend: { date: string; value: number }[]
   top_foods: { name: string; count: number }[]
   nutrient_distribution: { protein_pct: number; fat_pct: number; carb_pct: number }
+}
+
+export interface CompanionStats {
+  total_meals: number
+  total_days: number
+  ingredient_variety: number
+  favorite_method: string
+  favorite_method_label: string
+  favorite_method_count: number
+  first_record_date?: string
 }
 
 export interface RecentMeal {

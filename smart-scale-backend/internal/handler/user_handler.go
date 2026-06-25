@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"smart-scale-backend/internal/model"
 	"smart-scale-backend/internal/service"
@@ -107,16 +108,37 @@ func (h *UserHandler) UpdateAvatar(c *gin.Context) {
 	// 检查文件大小（限制5MB）
 	const maxSize = 5 * 1024 * 1024
 	if file.Size > maxSize {
-		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "File too large"))
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "File too large (max 5MB)"))
 		return
 	}
 
-	// TODO: 实际保存文件逻辑并更新数据库
-	filename := strconv.FormatInt(userID, 10) + "_" + file.Filename
-	_ = file
+	// 保存文件到 uploads 目录
+	filename := strconv.FormatInt(userID, 10) + "_avatar" + filepath.Ext(file.Filename)
+	savePath := filepath.Join("uploads", filename)
+	if err := c.SaveUploadedFile(file, savePath); err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to save avatar file"))
+		return
+	}
 
-	// 简化实现：返回占位URL
+	// 更新数据库中的 avatar_url
 	avatarURL := "/uploads/" + filename
+	if err := h.userService.UpdateAvatar(c.Request.Context(), int(userID), avatarURL); err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to update avatar"))
+		return
+	}
 
-	c.JSON(http.StatusOK, model.SuccessWithMessage("Avatar updated (stub)", map[string]string{"avatar_url": avatarURL}))
+	c.JSON(http.StatusOK, model.SuccessWithMessage("Avatar updated", map[string]string{"avatar_url": avatarURL}))
+}
+
+// ResetAvatar 重置头像为默认（名字首字）
+// GET /api/v1/user/avatar/reset
+func (h *UserHandler) ResetAvatar(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+
+	if err := h.userService.UpdateAvatar(c.Request.Context(), int(userID), ""); err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to reset avatar"))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.SuccessWithMessage("Avatar reset to default", nil))
 }

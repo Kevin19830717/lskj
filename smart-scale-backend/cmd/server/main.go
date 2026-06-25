@@ -88,7 +88,7 @@ func main() {
 
 	// 注册所有路由
 	setupRoutes(r, authHandler, userHandler, mealHandler, foodHandler,
-		summaryHandler, adviceHandler, dashboardHandler, authSvc, deviceHandler, deviceSvc, chatHandler)
+		summaryHandler, adviceHandler, dashboardHandler, authSvc, deviceHandler, deviceSvc, chatHandler, cfg, summarSvc)
 
 	// 9. 启动定时任务（归档 + 周报RAG建议）
 	cronScheduler := cron.NewScheduler(summarSvc, ragSvc, &cfg.Cron)
@@ -167,6 +167,8 @@ func setupRoutes(
 	deviceH *handler.DeviceHandler,
 	deviceSvc *service.DeviceService,
 	chatH *handler.ChatHandler,
+	cfg *config.Config,
+	summarSvc *service.SummaryService,
 ) {
 	api := r.Group("/api/v1")
 
@@ -180,6 +182,89 @@ func setupRoutes(
 	// === 后台管理（需 X-Admin-Key，在 handler 内校验）===
 	api.POST("/admin/devices", deviceH.Provision)      // 批量预登记设备
 	api.POST("/admin/devices/revoke", deviceH.Revoke)  // 吊销设备
+	// 管理员批量补填日报/周报（测试/比赛演示用）
+	adminKey := cfg.Admin.Key
+	api.POST("/admin/summaries/backfill", func(c *gin.Context) {
+		if adminKey == "" || c.GetHeader("X-Admin-Key") != adminKey {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的管理员密钥"})
+			return
+		}
+		// user_id: 必传; start_date / end_date: 可选，默认最近7天
+		var req struct {
+			UserID    int    `json:"user_id"`
+			StartDate string `json:"start_date"`
+			EndDate   string `json:"end_date"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || req.UserID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请提供有效的 user_id"})
+			return
+		}
+		now := time.Now()
+		endDate := now
+		startDate := now.AddDate(0, 0, -7)
+		if req.StartDate != "" {
+			if t, err := time.Parse("2006-01-02", req.StartDate); err == nil {
+				startDate = t
+			}
+		}
+		if req.EndDate != "" {
+			if t, err := time.Parse("2006-01-02", req.EndDate); err == nil {
+				endDate = t
+			}
+		}
+		daily, weekly, err := summarSvc.BackfillSummaries(c.Request.Context(), req.UserID, startDate, endDate)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message":      "补填完成",
+			"user_id":      req.UserID,
+			"start_date":   startDate.Format("2006-01-02"),
+			"end_date":     endDate.Format("2006-01-02"),
+			"daily_count":  daily,
+			"weekly_count": weekly,
+		})
+	})
+	// 管理员批量生成周/月/年报（用于补填历史数据）
+	api.POST("/admin/summaries/incremental-backfill", func(c *gin.Context) {
+		if adminKey == "" || c.GetHeader("X-Admin-Key") != adminKey {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "无效的管理员密钥"})
+			return
+		}
+		var req struct {
+			UserID int `json:"user_id"`
+			Rounds int `json:"rounds"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || req.UserID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请提供有效的 user_id"})
+			return
+		}
+		if req.Rounds <= 0 {
+			req.Rounds = 5
+		}
+		total := service.BackfillResult{}
+		for i := 0; i < req.Rounds; i++ {
+			r, err := summarSvc.IncrementalBackfill(c.Request.Context(), req.UserID)
+			if err != nil {
+				break
+			}
+			total.Weekly += r.Weekly
+			total.Monthly += r.Monthly
+			total.Yearly += r.Yearly
+			if r.Weekly+r.Monthly+r.Yearly == 0 {
+				break
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message":     "完成",
+			"user_id":     req.UserID,
+			"daily":       total.Daily,
+			"weekly":      total.Weekly,
+			"monthly":     total.Monthly,
+			"yearly":      total.Yearly,
+		})
+	})
 
 	// === 设备数据上报（设备认证：X-Device-Id + X-Device-Secret）===
 	// 设备认证中间件校验通过后，注入 user_id（即设备绑定用户），复用 RecordWeighIn 逻辑
@@ -201,6 +286,7 @@ func setupRoutes(
 	protected.GET("/user/stats", userH.GetUserStats)
 	protected.GET("/user/health-score", userH.GetHealthScore)
 	protected.POST("/user/avatar", userH.UpdateAvatar)
+	protected.GET("/user/avatar/reset", userH.ResetAvatar)
 
 	// 设备绑定管理（用户扫码绑定/解绑/查看自己的秤）
 	protected.POST("/devices/bind", deviceH.Bind)
@@ -220,6 +306,10 @@ func setupRoutes(
 	// 营养摘要
 	protected.POST("/summaries/generate", summaryH.GenerateSummary)
 	protected.GET("/summaries", summaryH.GetSummaries)
+	protected.DELETE("/summaries/:id", summaryH.DeleteSummary)
+	protected.DELETE("/summaries", summaryH.DeleteAllSummaries)
+	protected.PUT("/summaries/:id", summaryH.UpdateSummary)
+	protected.POST("/summaries/incremental-backfill", summaryH.IncrementalBackfill)
 
 	// AI健康建议 (RAG)
 	protected.POST("/health-advice/generate", adviceH.GenerateAdvice)
@@ -230,10 +320,12 @@ func setupRoutes(
 	protected.POST("/ai/chat", chatH.Chat)
 	protected.POST("/ai/chat/stream", chatH.ChatStream)
 	protected.GET("/ai/chat/history", chatH.ChatHistory)
+	protected.POST("/ai/chat/reset", chatH.ResetChat)
 
 	// 仪表盘
 	protected.GET("/dashboard/stats", dashboardH.GetStats)
 	protected.GET("/dashboard/recent-meals", dashboardH.GetRecentMeals)
+	protected.GET("/dashboard/companion", dashboardH.GetCompanionStats)
 
 	// 健康检查
 	r.GET("/health", func(c *gin.Context) {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import { apiGet, type DashboardStats, type RecentMeal } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import AppShell from "@/components/app-shell"
@@ -9,7 +9,6 @@ import { cookingColor } from "@/pages/RecordsPage"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -35,10 +34,22 @@ const periodDropdownOptions: DropdownOption[] = periodOptions.map((o) => ({
   label: o.label,
 }))
 
+// 不同周期对应的热量趋势卡片宽度比例（calc减去gap的一半）
+const chartWidthMap: Record<number, string> = {
+  7: "calc(50% - 10px)",
+  15: "calc(75% - 10px)",
+  30: "100%",
+}
+const statsWidthMap: Record<number, string> = {
+  7: "calc(50% - 10px)",
+  15: "calc(25% - 10px)",
+  30: "100%",
+}
+
 // ============================================================
-// Stats Cards — 动态标签
+// Stats Cards — 动态标签，支持垂直/水平布局
 // ============================================================
-function StatsGrid({ stats, days }: { stats: DashboardStats | null; days: number }) {
+function StatsGrid({ stats, days, layout }: { stats: DashboardStats | null; days: number; layout: "vertical" | "horizontal" }) {
   const periodLabel = periodOptions.find(o => o.days === days)?.label || `近${days}天`
 
   const statCards = [
@@ -48,39 +59,46 @@ function StatsGrid({ stats, days }: { stats: DashboardStats | null; days: number
     { id: "statCarb", label: `${periodLabel}平均碳水`, icon: Wheat, color: "#4CAF50", field: "total_carbohydrate_g" as const, unit: "g", decimals: 1 },
   ]
 
+  // 垂直布局（侧边窄列）：卡片纵向堆叠，图标和数值横向排列
+  // 水平布局（底部全宽）：4卡片横向排列
+  const gridClass = layout === "vertical"
+    ? "grid grid-cols-1 gap-3"
+    : "grid grid-cols-2 sm:grid-cols-4 gap-4"
+
   return (
-    <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4 mb-6">
+    <div className={gridClass}>
       {statCards.map((card, i) => {
         const Icon = card.icon
         const value = stats ? stats[card.field] : null
         return (
           <motion.div
             key={card.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: i * 0.1 }}
+            layout
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.4, delay: i * 0.05, layout: { duration: 0.5, ease: [0.4, 0, 0.2, 1] } }}
           >
-            <GlowCard theme="green" className="p-5 h-full">
-              <div className="flex items-center gap-4 relative overflow-hidden">
+            <GlowCard theme="green" className={cn("p-4 h-full", layout === "vertical" && "p-3.5")}>
+              <div className={cn("relative overflow-hidden", layout === "vertical" ? "flex items-center gap-3" : "flex flex-col items-center text-center gap-2")}>
                 <div
                   className="absolute -top-5 -right-5 w-15 h-15 rounded-full opacity-10"
                   style={{ background: card.color }}
                 />
                 <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  className={cn("rounded-xl flex items-center justify-center flex-shrink-0", layout === "vertical" ? "w-9 h-9" : "w-11 h-11")}
                   style={{ background: `${card.color}18`, color: card.color }}
                 >
-                  <Icon className="w-5 h-5" />
+                  <Icon className={cn(layout === "vertical" ? "w-4 h-4" : "w-5 h-5")} />
                 </div>
-                <div className="flex flex-col min-w-0">
-                  <span className="text-xs text-gray-500 font-medium truncate">{card.label}</span>
+                <div className={cn("min-w-0", layout === "vertical" ? "flex flex-col" : "flex flex-col items-center")}>
+                  <span className={cn("text-gray-500 font-medium truncate", layout === "vertical" ? "text-[11px]" : "text-xs")}>{card.label}</span>
                   {value != null && value > 0 ? (
-                    <span className="text-lg font-bold text-gray-800">
+                    <span className={cn("font-bold text-gray-800", layout === "vertical" ? "text-base" : "text-lg")}>
                       <AnimatedNumber value={value} decimals={card.decimals} duration={1.2} />
                       <span className="text-xs font-normal text-gray-400 ml-1">{card.unit}</span>
                     </span>
                   ) : (
-                    <span className="text-lg font-bold text-gray-300">--</span>
+                    <span className={cn("font-bold text-gray-300", layout === "vertical" ? "text-base" : "text-lg")}>--</span>
                   )}
                 </div>
               </div>
@@ -100,40 +118,24 @@ interface ChartDataPoint {
   value: number;
 }
 
-const chartVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1,
-    },
-  },
-}
-
-const barVariants = {
-  hidden: { scaleY: 0, opacity: 0, transformOrigin: "bottom" },
-  visible: {
-    scaleY: 1,
-    opacity: 1,
-    transformOrigin: "bottom",
-    transition: {
-      duration: 0.5,
-      ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
-    },
-  },
-}
-
 function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days: number }) {
   const periodLabel = periodOptions.find(o => o.days === days)?.label || `近${days}天`
 
   const chartData: ChartDataPoint[] = useMemo(() => {
     if (!stats?.energy_trend?.length) return []
-    const dayLabels = ["日", "一", "二", "三", "四", "五", "六"]
+    // 所有周期都显示日期 (MM-DD)
     return stats.energy_trend.map((t) => ({
-      day: days <= 7 ? "周" + dayLabels[new Date(t.date).getDay()] : t.date.slice(5),
+      day: t.date.slice(5),
       value: Math.round(t.value),
     }))
   }, [stats, days])
+
+  // 日期标签显示间隔：数据少时全部显示，数据多时隔几个显示一个
+  const labelInterval = useMemo(() => {
+    if (chartData.length <= 7) return 1
+    if (chartData.length <= 15) return 2
+    return Math.ceil(chartData.length / 8) // 约8个标签
+  }, [chartData.length])
 
   const totalKcal = chartData.reduce((a, b) => a + b.value, 0)
   const totalStr = totalKcal > 0 ? totalKcal.toLocaleString() : "0"
@@ -148,7 +150,7 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
   }, [chartData])
 
   const maxValue = useMemo(
-    () => chartData.reduce((max, item) => (item.value > max ? item.value : max), 0),
+    () => chartData.reduce((max, item) => (item.value > max ? item.value : max), 1),
     [chartData]
   )
 
@@ -162,63 +164,79 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
-          <div className="flex flex-col">
-            <GradientText className="text-5xl font-bold tracking-tighter">
-              {totalStr}
-            </GradientText>
-            <CardDescription className="flex items-center gap-1 mt-1">
-              {trendPct != null ? (
-                <>
+        {chartData.length === 0 ? (
+          <div className="py-12 text-center text-muted-foreground text-sm">暂无热量数据</div>
+        ) : (
+          <>
+            {/* 总热量 + 趋势 */}
+            <div className="flex items-end gap-3 mb-4">
+              <GradientText className="text-4xl font-bold tracking-tighter">
+                {totalStr}
+              </GradientText>
+              <span className="text-xs text-gray-400 mb-1.5">kcal 总计</span>
+              {trendPct != null && (
+                <div className="flex items-center gap-1 mb-1.5 ml-auto">
                   {isTrendUp ? (
                     <TrendingUp className="h-4 w-4 text-emerald-500" />
                   ) : (
                     <TrendingDown className="h-4 w-4 text-red-500" />
                   )}
-                  <span className={isTrendUp ? "text-emerald-500" : "text-red-500"}>
+                  <span className={cn("text-sm font-semibold", isTrendUp ? "text-emerald-500" : "text-red-500")}>
                     {isTrendUp ? "+" : ""}{trendPct.toFixed(1)}%
                   </span>
-                  <span className="text-muted-foreground ml-0.5">vs 上半周期</span>
-                </>
-              ) : (
-                <span className="text-muted-foreground">暂无趋势数据</span>
-              )}
-            </CardDescription>
-          </div>
-
-          <motion.div
-            key={`chart-${days}`}
-            className="flex h-28 w-full items-end justify-between gap-2"
-            variants={chartVariants}
-            initial="hidden"
-            animate="visible"
-            aria-label="Activity chart"
-          >
-            {chartData.length === 0 ? (
-              <div className="flex-1 text-center text-muted-foreground text-sm py-8">暂无热量数据</div>
-            ) : (
-              chartData.map((item, index) => (
-                <div
-                  key={index}
-                  className="flex h-full w-full flex-col items-center justify-end gap-2"
-                  role="presentation"
-                >
-                  <motion.div
-                    className="w-full rounded-md bg-gradient-to-t from-[#16a34a] to-[#4ade80]"
-                    style={{
-                      height: `${maxValue > 0 ? (item.value / maxValue) * 100 : 0}%`,
-                    }}
-                    variants={barVariants}
-                    aria-label={`${item.day}: ${item.value} kcal`}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    {item.day}
-                  </span>
+                  <span className="text-xs text-gray-400">vs 上半周期</span>
                 </div>
-              ))
-            )}
-          </motion.div>
-        </div>
+              )}
+            </div>
+
+            {/* 柱状图 — 独立固定高度容器，柱子逐个出现动画 */}
+            <div className="relative w-full" style={{ height: "160px" }}>
+              <div className="absolute inset-0 flex items-end justify-between gap-1.5">
+                {chartData.map((item, index) => {
+                  const pct = maxValue > 0 ? (item.value / maxValue) * 100 : 0
+                  return (
+                    <div key={`${days}-${index}`} className="group relative flex-1 h-full flex flex-col justify-end items-center min-w-0">
+                      {/* 悬浮提示 */}
+                      <div className="absolute -top-1 left-1/2 -translate-x-1/2 -translate-y-full opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white shadow-lg">
+                        {item.day}: {item.value} kcal
+                      </div>
+                      {/* 柱子 — 逐个从底部弹出，key含days确保切换时重新动画 */}
+                      <motion.div
+                        className="w-full max-w-[40px] rounded-t-md bg-gradient-to-t from-[#16a34a] to-[#4ade80] transition-colors duration-200 group-hover:from-[#15803d] group-hover:to-[#22c55e] group-hover:shadow-lg group-hover:shadow-green-500/30"
+                        style={{
+                          height: `${pct}%`,
+                          minHeight: item.value > 0 ? "3px" : "0",
+                        }}
+                        initial={{ scaleY: 0, opacity: 0 }}
+                        animate={{ scaleY: 1, opacity: 1 }}
+                        transition={{
+                          duration: 0.35,
+                          delay: index * 0.04,
+                          ease: [0.4, 0, 0.2, 1],
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 日期标签 — 数据多时间隔显示，避免拥挤 */}
+            <div className="flex justify-between gap-1.5 mt-2">
+              {chartData.map((item, index) => (
+                <div key={`${days}-${index}`} className="flex-1 min-w-0 text-center">
+                  {(index % labelInterval === 0 || index === chartData.length - 1) ? (
+                    <span className="text-xs text-muted-foreground truncate block">
+                      {item.day}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-transparent block">&nbsp;</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   )
@@ -281,8 +299,14 @@ function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
                       <span className="text-gray-600">{item.label}</span>
                       <span className="font-semibold text-gray-800">{item.pct.toFixed(0)}%</span>
                     </div>
-                    <div className="mt-1 h-1.5 rounded-full bg-gray-100">
-                      <div className="h-full rounded-full" style={{ width: `${item.pct}%`, background: item.color }} />
+                    <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ background: item.color }}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${item.pct}%` }}
+                        transition={{ duration: 0.7, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                      />
                     </div>
                   </div>
                 </div>
@@ -396,23 +420,27 @@ function MealDetailCard({ meal, onClose }: { meal: RecentMeal; onClose: () => vo
 
 // ============================================================
 // RecentMealsList — 最近用餐记录（可点击查看详情）
+// 导出供 ProfilePage 使用
 // ============================================================
-function RecentMealsList({ days }: { days: number }) {
+export function RecentMealsList({ days = 30, limit = 4 }: { days?: number; limit?: number }) {
   const [meals, setMeals] = useState<RecentMeal[]>([])
   const [selectedMeal, setSelectedMeal] = useState<RecentMeal | null>(null)
 
   useEffect(() => {
-    apiGet<RecentMeal[]>(`/dashboard/recent-meals?days=${days}&limit=4`).then((d) => {
+    apiGet<RecentMeal[]>(`/dashboard/recent-meals?days=${days}&limit=${limit}`).then((d) => {
       if (d.code === 0 && d.data) setMeals(d.data)
     }).catch(() => {})
-  }, [days])
+  }, [days, limit])
 
   return (
     <>
-      <Card className={cn("w-full border-0 shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white/92 backdrop-blur-[12px]")}>
+      <Card className={cn("relative overflow-hidden w-full border-0 shadow-[0_8px_32px_rgba(102,126,234,0.1)] bg-white/92 backdrop-blur-[12px]")}>
         <CardHeader>
           <CardTitle className="text-base font-bold flex items-center gap-2">
-            <Clock className="h-5 w-5 text-green-500" /> 最近用餐
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center">
+              <Clock className="h-4 w-4 text-white" />
+            </div>
+            最近餐食
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -425,9 +453,12 @@ function RecentMealsList({ days }: { days: number }) {
                 const time = new Date(meal.created_at)
                 const timeStr = time.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
                 return (
-                  <div
+                  <motion.div
                     key={i}
-                    className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all hover:shadow-md"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.3, delay: i * 0.08, ease: [0.4, 0, 0.2, 1] }}
+                    className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all hover:shadow-md hover:translate-x-1"
                     style={{ backgroundColor: cc.bg }}
                     onClick={() => setSelectedMeal(meal)}
                   >
@@ -447,7 +478,7 @@ function RecentMealsList({ days }: { days: number }) {
                       <div className="text-sm font-bold" style={{ color: cc.text }}>{Math.round(meal.cooked_energy_kcal)}</div>
                       <div className="text-xs text-gray-400">kcal</div>
                     </div>
-                  </div>
+                  </motion.div>
                 )
               })}
             </div>
@@ -486,8 +517,13 @@ function TopFoodsCard({ stats }: { stats: DashboardStats | null }) {
                     <span className="text-gray-700 truncate">{food.name}</span>
                     <span className="text-gray-400 text-xs">{food.count}次</span>
                   </div>
-                  <div className="h-2 rounded-full bg-gray-100">
-                    <div className="h-full rounded-full bg-gradient-to-r from-[#667eea] to-[#764ba2]" style={{ width: `${(food.count / maxCount) * 100}%` }} />
+                  <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <motion.div
+                      className="h-full rounded-full bg-gradient-to-r from-[#667eea] to-[#764ba2]"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(food.count / maxCount) * 100}%` }}
+                      transition={{ duration: 0.5, delay: 0.1 + i * 0.08, ease: [0.22, 1, 0.36, 1] }}
+                    />
                   </div>
                 </div>
               </div>
@@ -517,6 +553,9 @@ export default function DashboardPage() {
   }, [fetchStats])
 
   const selectedPeriod = periodOptions.find(o => o.days === days) || periodOptions[0]
+  const chartWidth = chartWidthMap[days] || "calc(50% - 10px)"
+  const statsWidth = statsWidthMap[days] || "calc(50% - 10px)"
+  const statsLayout = days === 30 ? "horizontal" : "vertical"
 
   return (
     <AppShell title="仪表盘" titleIcon={<BarChart3 className="w-6 h-6 text-green-600" />} theme="green">
@@ -535,20 +574,53 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* 统计卡片 */}
-      <StatsGrid stats={stats} days={days} />
+      {/* 第一行：热量趋势（左）+ 统计卡片（右），切换days时用淡入淡出+layout动画避免卡顿 */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={days}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.25 }}
+          className="mb-6"
+        >
+          <div className="flex flex-wrap gap-5">
+            <div
+              className="min-w-0"
+              style={{
+                width: chartWidth,
+                transition: "width 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+            >
+              <ActivityChartCard stats={stats} days={days} />
+            </div>
+            <div
+              className="min-w-0"
+              style={{
+                width: statsWidth,
+                transition: "width 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+            >
+              <StatsGrid stats={stats} days={days} layout={statsLayout} />
+            </div>
+          </div>
+        </motion.div>
+      </AnimatePresence>
 
-      {/* 热量趋势 + 营养分布 */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <ActivityChartCard stats={stats} days={days} />
-        <NutrientDistribution stats={stats} />
-      </div>
-
-      {/* 最近用餐 + 食物排行 */}
-      <div className="grid gap-5 lg:grid-cols-2 mt-5">
-        <RecentMealsList days={days} />
-        <TopFoodsCard stats={stats} />
-      </div>
+      {/* 第二行：营养素分布 + 常吃食物排行 — 切换时淡入 */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={`row2-${days}`}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="grid gap-5 lg:grid-cols-2"
+        >
+          <NutrientDistribution stats={stats} />
+          <TopFoodsCard stats={stats} />
+        </motion.div>
+      </AnimatePresence>
     </AppShell>
   )
 }

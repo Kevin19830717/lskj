@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import AppShell from "@/components/app-shell"
 import { cn } from "@/lib/utils"
-import { apiGet } from "@/lib/api"
+import { apiGet, apiPost } from "@/lib/api"
 import { Send, Sparkles, User, RotateCcw } from "lucide-react"
 
 interface ChatMsg {
@@ -60,13 +60,19 @@ export default function AIChatPage() {
   // 滚动到底部：首次加载用 instant，后续用 smooth
   useEffect(() => {
     if (!historyLoaded || !scrollRef.current) return
+    const el = scrollRef.current
     if (isFirstRender.current) {
-      // 首次加载直接跳到底部，无动画
+      // 首次加载：AppShell 页面切换动画约 450ms，期间 scrollHeight 不稳定，
+      // 先立即跳一次，动画结束后再校正一次，确保无可见的"从顶滑到底"
       isFirstRender.current = false
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      el.scrollTop = el.scrollHeight
+      const timer = setTimeout(() => {
+        el.scrollTop = el.scrollHeight
+      }, 500)
+      return () => clearTimeout(timer)
     } else {
       // 后续新消息平滑滚动
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
     }
   }, [messages, loading, historyLoaded])
 
@@ -175,12 +181,14 @@ export default function AIChatPage() {
     }
   }
 
-  const resetChat = () => {
+  const resetChat = async () => {
     if (loading && abortRef.current) {
       abortRef.current.abort()
     }
     setMessages([WELCOME_MSG])
     setLoading(false)
+    // 调用后端接口清除服务器端的聊天记录和对话状态
+    apiPost("/ai/chat/reset").catch(() => {})
   }
 
   return (
@@ -189,48 +197,43 @@ export default function AIChatPage() {
         {/* 消息列表区 */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto pr-2 space-y-5 scroll-smooth"
+          className="flex-1 overflow-y-auto pr-2 space-y-5"
         >
-          <AnimatePresence initial={false}>
-            {messages.map((msg, idx) => (
-              <motion.div
-                key={idx}
-                initial={{ opacity: 0, y: 16, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                className={cn("flex gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
-              >
-                {/* 头像：仅用户显示 */}
-                {msg.role === "user" && (
-                  <div className="flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white shadow-[0_4px_14px_rgba(102,126,234,0.4)]">
-                    <User className="w-5 h-5" />
-                  </div>
-                )}
-
-                {/* 气泡 */}
-                <div
-                  className={cn(
-                    "relative max-w-[72%] px-5 py-3.5 rounded-2xl shadow-md",
-                    msg.role === "user"
-                      ? "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-tr-md shadow-[0_4px_16px_rgba(102,126,234,0.25)]"
-                      : "bg-white/90 backdrop-blur-sm text-gray-700 rounded-tl-md border border-[rgba(200,195,235,0.4)] shadow-[0_4px_16px_rgba(102,126,234,0.08)]"
-                  )}
-                >
-                  {/* 气泡装饰光晕 */}
-                  {msg.role === "assistant" && (
-                    <div className="absolute -top-2 -left-2 w-16 h-16 bg-[radial-gradient(circle,rgba(250,204,21,0.15)_0%,transparent_70%)] rounded-full pointer-events-none" />
-                  )}
-                  <div className="relative whitespace-pre-wrap text-[14px] leading-relaxed break-words">
-                    {msg.content}
-                    {/* 流式输出光标 */}
-                    {loading && idx === messages.length - 1 && msg.role === "assistant" && (
-                      <span className="inline-block w-1.5 h-4 ml-0.5 bg-[#667eea] animate-pulse align-text-bottom" />
-                    )}
-                  </div>
+          {messages.map((msg, idx) => (
+            <div
+              key={idx}
+              className={cn("flex gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
+            >
+              {/* 头像：仅用户显示 */}
+              {msg.role === "user" && (
+                <div className="flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white shadow-[0_4px_14px_rgba(102,126,234,0.4)]">
+                  <User className="w-5 h-5" />
                 </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+              )}
+
+              {/* 气泡 */}
+              <div
+                className={cn(
+                  "relative max-w-[72%] px-5 py-3.5 rounded-2xl shadow-md",
+                  msg.role === "user"
+                    ? "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-tr-md shadow-[0_4px_16px_rgba(102,126,234,0.25)]"
+                    : "bg-white/95 text-gray-700 rounded-tl-md border border-[rgba(200,195,235,0.4)] shadow-[0_4px_16px_rgba(102,126,234,0.08)]"
+                )}
+              >
+                {/* 气泡装饰光晕 */}
+                {msg.role === "assistant" && (
+                  <div className="absolute -top-2 -left-2 w-16 h-16 bg-[radial-gradient(circle,rgba(250,204,21,0.15)_0%,transparent_70%)] rounded-full pointer-events-none" />
+                )}
+                <div className="relative whitespace-pre-wrap text-[14px] leading-relaxed break-words">
+                  {msg.content}
+                  {/* 流式输出光标 */}
+                  {loading && idx === messages.length - 1 && msg.role === "assistant" && (
+                    <span className="inline-block w-1.5 h-4 ml-0.5 bg-[#667eea] animate-pulse align-text-bottom" />
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* 快捷问题 */}

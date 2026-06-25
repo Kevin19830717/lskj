@@ -3,8 +3,8 @@ import type { DateRange } from "react-aria-components"
 import AppShell from "@/components/app-shell"
 import { apiGet, type PaginatedRecords, type WeighRecord } from "@/lib/api"
 import { Card, CardContent } from "@/components/ui/card"
-import { JollyDateRangePicker } from "@/components/ui/date-range-picker"
 import { motion, AnimatePresence } from "framer-motion"
+import { JollyDateRangePicker } from "@/components/ui/date-range-picker"
 import { ClipboardList, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils } from "lucide-react"
 
 // ============================================================
@@ -196,7 +196,7 @@ export default function RecordsPage() {
       setLoading(true)
       const params = new URLSearchParams({
         page: String(currentPage),
-        page_size: "20",
+        page_size: "15",
       })
       if (startDate) params.set("start_date", startDate)
       if (endDate) params.set("end_date", endDate)
@@ -286,6 +286,14 @@ export default function RecordsPage() {
                 <button
                   type="button"
                   disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(1)}
+                  className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                >
+                  首页
+                </button>
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
@@ -313,6 +321,14 @@ export default function RecordsPage() {
                   className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
                   下一页<ChevronRight className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  disabled={currentPage >= (records?.total_pages ?? 1)}
+                  onClick={() => setCurrentPage(records?.total_pages ?? 1)}
+                  className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                >
+                  尾页
                 </button>
               </div>
             )}
@@ -343,13 +359,19 @@ export default function RecordsPage() {
             {!loading && filteredItems.length === 0 && (
               <div className="px-4 py-10 text-center text-gray-400">暂无记录</div>
             )}
-            {!loading && filteredItems.map((record) => {
+            {!loading && filteredItems.map((record, recordIdx) => {
               const isExpanded = expandedId === record.id
               const cc = cookingColor(record.cooking_method)
               const names = record.ingredient_names?.length ? record.ingredient_names : record.ingredients
               const methodLabel = cookingLabel(record)
               return (
-                <div key={record.id} className={isExpanded ? "bg-[#f8f9ff]" : ""}>
+                <motion.div
+                  key={record.id}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.3, delay: recordIdx * 0.05, ease: [0.4, 0, 0.2, 1] }}
+                  className={isExpanded ? "bg-[#f8f9ff]" : ""}
+                >
                   {/* 概要行 */}
                   <div
                     className="flex items-center gap-3 px-6 py-3 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
@@ -412,7 +434,7 @@ export default function RecordsPage() {
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </div>
+                </motion.div>
               )
             })}
           </div>

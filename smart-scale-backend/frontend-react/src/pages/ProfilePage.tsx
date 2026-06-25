@@ -1,33 +1,23 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react"
+import { useEffect, useMemo, useState } from "react"
 import AppShell, { notifyUserUpdated } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { AnimatedDropdown, type DropdownOption } from "@/components/animated-dropdown"
-import { apiGet, apiPut, type UserProfile } from "@/lib/api"
-import { LoaderCircle, Save, User, Camera, Sparkles, Ruler, Weight, Target, HeartPulse, Calendar } from "lucide-react"
-
-const genderOptions: DropdownOption[] = [
-  { value: "", label: "未设置" },
-  { value: "male", label: "男" },
-  { value: "female", label: "女" },
-  { value: "other", label: "其他" },
-]
-
-const healthGoalOptions: DropdownOption[] = [
-  { value: "", label: "未设置" },
-  { value: "lose_weight", label: "减脂" },
-  { value: "gain_weight", label: "增重" },
-  { value: "maintain", label: "保持体重" },
-  { value: "muscle_gain", label: "增肌" },
-  { value: "health_maintenance", label: "健康维护" },
-]
+import { apiGet, apiPut, type UserProfile, type CompanionStats } from "@/lib/api"
+import { AnimatedNumber } from "@/components/fx"
+import { RecentMealsList } from "@/pages/DashboardPage"
+import { LoaderCircle, Save, User, Sparkles, X, Pencil, Heart, Activity, Award, Utensils, CalendarDays, Flame, ChefHat } from "lucide-react"
 
 const goalLabels: Record<string, string> = {
   lose_weight: "减脂", gain_weight: "增重", maintain: "保持体重",
   muscle_gain: "增肌", health_maintenance: "健康维护",
 }
-const genderLabels: Record<string, string> = { male: "男", female: "女", other: "其他" }
+// 反向映射：中文 → 英文 key（保存时用）
+const goalKeyFromLabel: Record<string, string> = Object.fromEntries(
+  Object.entries(goalLabels).map(([k, v]) => [v, k])
+)
+const genderEnToCn: Record<string, string> = { male: "男", female: "女" }
+const genderCnToEn: Record<string, string> = { "男": "male", "女": "female" }
 
 function getStoredUser() {
   try {
@@ -35,13 +25,8 @@ function getStoredUser() {
   } catch { return {} }
 }
 
-function getStoredAvatar() {
-  return localStorage.getItem("user_avatar") || ""
-}
-
 export default function ProfilePage() {
   const sessionUser = getStoredUser()
-  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [nickname, setNickname] = useState(sessionUser.nickname || "")
   const [phone, setPhone] = useState(sessionUser.phone || "")
   const [gender, setGender] = useState("")
@@ -50,9 +35,10 @@ export default function ProfilePage() {
   const [weightKg, setWeightKg] = useState("")
   const [healthGoal, setHealthGoal] = useState("")
   const [allergies, setAllergies] = useState("")
-  const [avatarPreview, setAvatarPreview] = useState(getStoredAvatar())
   const [feedback, setFeedback] = useState("")
   const [saving, setSaving] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [companion, setCompanion] = useState<CompanionStats | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -60,19 +46,25 @@ export default function ProfilePage() {
       const profileRes = await apiGet<UserProfile>("/user/profile")
       if (cancelled) return
       const nextProfile = profileRes.data ?? null
-      setProfile(nextProfile)
       if (nextProfile) {
         setNickname(nextProfile.nickname || sessionUser.nickname || "")
         setPhone(nextProfile.phone || sessionUser.phone || "")
-        setGender(nextProfile.gender || "")
+        // 性别/健康目标：英文 key 转中文显示
+        setGender(genderEnToCn[nextProfile.gender] || nextProfile.gender || "")
         setAge(nextProfile.age != null ? String(nextProfile.age) : "")
         setHeightCm(nextProfile.height_cm != null ? String(nextProfile.height_cm) : "")
         setWeightKg(nextProfile.weight_kg != null ? String(nextProfile.weight_kg) : "")
-        setHealthGoal(nextProfile.health_goal || "")
+        setHealthGoal(goalLabels[nextProfile.health_goal] || nextProfile.health_goal || "")
         setAllergies(nextProfile.allergies?.join(", ") || "")
       }
     }
     loadAll().catch(() => undefined)
+
+    // 加载陪伴记录统计
+    apiGet<CompanionStats>("/dashboard/companion").then((d) => {
+      if (!cancelled && d.code === 0 && d.data) setCompanion(d.data)
+    }).catch(() => {})
+
     return () => { cancelled = true }
   }, [sessionUser.nickname, sessionUser.phone])
 
@@ -84,48 +76,31 @@ export default function ProfilePage() {
     return (w / Math.pow(h / 100, 2)).toFixed(1)
   }, [heightCm, weightKg])
 
-  const registerDays = useMemo(() => {
-    if (!profile?.created_at) return null
-    return Math.max(1, Math.floor((Date.now() - new Date(profile.created_at).getTime()) / 86400000))
-  }, [profile?.created_at])
-
   async function saveAll() {
     setSaving(true); setFeedback("")
     try {
       await apiPut("/user/profile", {
         nickname: nickname.trim() || undefined,
-        gender: gender || undefined, age: age ? Number(age) : undefined,
+        // 性别/健康目标：中文转英文 key 提交
+        gender: genderCnToEn[gender] || gender || undefined,
+        age: age ? Number(age) : undefined,
         height_cm: heightCm ? Number(heightCm) : undefined, weight_kg: weightKg ? Number(weightKg) : undefined,
-        health_goal: healthGoal || undefined,
+        health_goal: goalKeyFromLabel[healthGoal] || healthGoal || undefined,
         allergies: allergies.split(",").map(i => i.trim()).filter(Boolean),
       })
       notifyUserUpdated({ nickname: nickname.trim(), phone })
       setFeedback("保存成功")
+      setShowEditModal(false)
     } finally { setSaving(false) }
   }
 
-  function handleAvatarChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file) return
-    if (!file.type.startsWith("image/")) { setFeedback("请选择图片文件"); return }
-    if (file.size > 5 * 1024 * 1024) { setFeedback("头像图片不能超过 5MB"); return }
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const result = String(e.target?.result || "")
-      localStorage.setItem("user_avatar", result)
-      setAvatarPreview(result)
-      window.dispatchEvent(new Event("avatar-updated"))
-      setFeedback("头像已更新")
-    }
-    reader.readAsDataURL(file)
-    event.target.value = ""
-  }
-
   const summaryItems = [
-    { icon: Ruler, label: "身高", value: heightCm ? `${heightCm} cm` : "未设置" },
-    { icon: Weight, label: "体重", value: weightKg ? `${weightKg} kg` : "未设置" },
-    { icon: HeartPulse, label: "BMI", value: bmi ?? "未设置" },
-    { icon: Target, label: "目标", value: goalLabels[healthGoal] || "未设置" },
+    { label: "性别", value: gender || "未设置", icon: User, color: "#60a5fa" },
+    { label: "年龄", value: age ? `${age} 岁` : "未设置", icon: Heart, color: "#f472b6" },
+    { label: "目标", value: healthGoal || "未设置", icon: Award, color: "#fbbf24" },
+    { label: "身高", value: heightCm ? `${heightCm} cm` : "未设置", icon: Activity, color: "#34d399" },
+    { label: "体重", value: weightKg ? `${weightKg} kg` : "未设置", icon: Activity, color: "#a78bfa" },
+    { label: "BMI", value: bmi ?? "未设置", icon: Activity, color: "#fb923c" },
   ]
 
   return (
@@ -136,110 +111,223 @@ export default function ProfilePage() {
         </div>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_1.5fr]">
-        {/* ===== 左侧：头像信息卡片 ===== */}
-        <div className="space-y-4">
-          <Card className="overflow-hidden border-0 bg-gradient-to-br from-[#667eea] via-[#6c63ff] to-[#764ba2] text-white shadow-[0_12px_36px_rgba(102,126,234,0.25)]">
-            <CardContent className="p-6 relative">
-              <div className="absolute -top-16 -right-16 w-32 h-32 rounded-full bg-white/8 blur-sm" />
-              <div className="flex flex-col items-center gap-3 relative z-10">
-                <label className="group relative flex h-24 w-24 cursor-pointer items-center justify-center overflow-hidden rounded-full border-4 border-white/30 bg-gradient-to-br from-[#a78bfa] to-[#7c3aed] font-bold text-white shadow-xl flex-shrink-0 ring-4 ring-white/10">
-                  {avatarPreview ? (
-                    <img src={avatarPreview} alt="头像" className="h-full w-full object-cover" />
-                  ) : (
-                    <span className="text-3xl">{avatarLetter}</span>
-                  )}
-                  <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-                    <Camera className="h-5 w-5" />
-                  </span>
-                  <input type="file" className="hidden" accept="image/*" onChange={handleAvatarChange} />
-                </label>
-                <div className="text-center">
-                  <h3 className="text-xl font-bold">{nickname || "未设置昵称"}</h3>
-                  <p className="text-sm text-white/60 mt-0.5">{phone || "未绑定手机"}</p>
-                </div>
-                {registerDays && (
-                  <div className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs">
-                    <Calendar className="h-3 w-3" /> 已使用 {registerDays} 天
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+      {/* ===== 紫色大框：左1/3用户信息 + 右2/3数据卡片 ===== */}
+      <Card className="overflow-hidden border-0 bg-gradient-to-br from-[#667eea] via-[#6c63ff] to-[#764ba2] text-white shadow-[0_8px_28px_rgba(102,126,234,0.22)] mb-5">
+        <CardContent className="p-0 relative">
+          {/* 装饰光晕 */}
+          <div className="absolute -top-12 -right-8 w-28 h-28 rounded-full bg-white/8 blur-sm pointer-events-none" />
+          <div className="absolute -bottom-10 -left-6 w-24 h-24 rounded-full bg-white/6 blur-sm pointer-events-none" />
+          <div className="absolute top-1/3 right-1/4 w-2 h-2 rounded-full bg-white/30 blur-[1px] pointer-events-none animate-pulse" />
 
-          {/* 信息摘要 */}
-          <div className="grid grid-cols-2 gap-3">
-            {summaryItems.map((item) => {
-              const Icon = item.icon
-              return (
-                <div key={item.label} className="rounded-xl bg-white/85 border border-[#667eea]/10 p-4 shadow-sm">
-                  <div className="flex items-center gap-1.5 text-[#667eea] text-xs mb-1.5">
-                    <Icon className="h-3.5 w-3.5" /> {item.label}
-                  </div>
-                  <div className="text-lg font-bold text-gray-800">{item.value}</div>
-                </div>
-              )
-            })}
+          <div className="flex flex-col sm:flex-row relative z-10">
+            {/* 左1/3：头像（名字首字）、名字、电话、编辑按钮 */}
+            <div className="flex flex-col items-center justify-center gap-3 p-6 sm:w-1/3 sm:border-r border-white/15">
+              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white/30 bg-gradient-to-br from-[#a78bfa] to-[#7c3aed] font-bold text-white shadow-xl flex-shrink-0 transition-all duration-300 hover:scale-110 hover:border-white/50 hover:shadow-2xl cursor-default">
+                <span className="text-3xl transition-transform duration-300">{avatarLetter}</span>
+              </div>
+              <h3 className="text-lg font-bold text-center transition-all duration-300 hover:scale-105 hover:text-white/90 cursor-default">{nickname || "未设置昵称"}</h3>
+              <p className="text-sm text-white/65 transition-all duration-300 hover:text-white/85 hover:scale-105 cursor-default">{phone || "未绑定手机"}</p>
+              <button
+                onClick={() => setShowEditModal(true)}
+                className="flex items-center gap-1.5 rounded-full bg-white/15 hover:bg-white/25 px-4 py-2 text-sm font-medium transition-all duration-300 hover:shadow-lg hover:shadow-white/20 hover:-translate-y-0.5"
+              >
+                <Pencil className="h-3.5 w-3.5" /> 信息编辑
+              </button>
+            </div>
+
+            {/* 右2/3：6格信息（悬停动画+图标） */}
+            <div className="sm:w-2/3 p-5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 h-full content-center">
+                {summaryItems.map((item) => {
+                  const Icon = item.icon
+                  return (
+                    <div
+                      key={item.label}
+                      className="group relative rounded-xl bg-white/15 p-3.5 text-center transition-all duration-300 hover:bg-white/25 hover:shadow-lg hover:shadow-black/10 hover:-translate-y-1 cursor-default overflow-hidden"
+                    >
+                      {/* 悬停时显示的图标光晕 */}
+                      <div
+                        className="absolute -top-4 -right-4 w-12 h-12 rounded-full opacity-0 group-hover:opacity-20 blur-[2px] transition-opacity duration-300"
+                        style={{ background: item.color }}
+                      />
+                      <div className="relative z-10">
+                        <div className="flex items-center justify-center gap-1 text-xs text-white/65 mb-1">
+                          <Icon className="h-3 w-3 transition-transform duration-300 group-hover:scale-125" style={{ color: item.color }} />
+                          {item.label}
+                        </div>
+                        <div className="text-base font-bold text-white truncate transition-transform duration-300 group-hover:scale-105">{item.value}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        {/* ===== 右侧：编辑表单 ===== */}
-        <Card className="border-0 bg-gradient-to-br from-white to-[#f8f9ff] shadow-[0_8px_30px_rgba(102,126,234,0.08)]">
-          <CardContent className="p-6">
-            <div className="mb-5 flex items-center justify-between">
-              <h4 className="flex items-center gap-2 text-lg font-semibold text-[#4f46b5]">
-                <User className="h-5 w-5 text-[#667eea]" /> 个人信息
-              </h4>
-              <Button onClick={() => void saveAll()} disabled={saving}
-                className="bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:from-[#5b6ee0] hover:to-[#6d42a0] rounded-xl px-5 h-10 shadow-md shadow-[#667eea]/20">
-                {saving ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                保存
-              </Button>
+      {/* ===== 最近餐食（左） + 智能秤陪伴记录（右） ===== */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* 左：最近餐食 */}
+        <RecentMealsList days={30} limit={4} />
+
+        {/* 右：智能秤陪伴记录 */}
+        <Card className="relative overflow-hidden border-0 bg-gradient-to-br from-white via-[#f5f3ff] to-[#ede9fe] shadow-[0_8px_32px_rgba(102,126,234,0.12)]">
+          {/* 装饰光斑 */}
+          <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-[#667eea]/8 blur-2xl pointer-events-none" />
+          <div className="absolute -bottom-8 -left-8 w-28 h-28 rounded-full bg-[#764ba2]/6 blur-2xl pointer-events-none" />
+          <CardContent className="p-5 relative z-10">
+            <div className="mb-4 flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#667eea] to-[#764ba2] flex items-center justify-center shadow-md">
+                <Sparkles className="h-4 w-4 text-white" />
+              </div>
+              <h4 className="text-base font-bold text-[#4f46b5]">智能秤陪伴记录</h4>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">昵称</label>
-                <Input value={nickname} onChange={e => setNickname(e.target.value)} placeholder="设置昵称..."
-                  className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-11" />
+            {companion ? (
+              <div className="grid grid-cols-2 gap-3">
+                {/* 记录天数 */}
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                  <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#667eea]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
+                  <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
+                    <CalendarDays className="h-3.5 w-3.5" /> 记录天数
+                  </div>
+                  <div className="text-3xl font-bold text-[#4f46b5] relative z-10">
+                    <AnimatedNumber value={companion.total_days} duration={1.5} />
+                    <span className="text-sm font-normal text-gray-400 ml-1">天</span>
+                  </div>
+                </div>
+
+                {/* 记录餐数 */}
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                  <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#764ba2]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
+                  <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
+                    <Utensils className="h-3.5 w-3.5" /> 记录餐数
+                  </div>
+                  <div className="text-3xl font-bold text-[#4f46b5] relative z-10">
+                    <AnimatedNumber value={companion.total_meals} duration={1.5} />
+                    <span className="text-sm font-normal text-gray-400 ml-1">顿</span>
+                  </div>
+                </div>
+
+                {/* 食材种类 */}
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                  <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#f59e0b]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
+                  <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
+                    <Flame className="h-3.5 w-3.5" /> 食材种类
+                  </div>
+                  <div className="text-3xl font-bold text-[#4f46b5] relative z-10">
+                    <AnimatedNumber value={companion.ingredient_variety} duration={1.5} />
+                    <span className="text-sm font-normal text-gray-400 ml-1">种</span>
+                  </div>
+                </div>
+
+                {/* 最爱烹饪方式 */}
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                  <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#10b981]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
+                  <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
+                    <ChefHat className="h-3.5 w-3.5" /> 最爱烹饪
+                  </div>
+                  <div className="text-2xl font-bold text-[#4f46b5] relative z-10">
+                    {companion.favorite_method_label || "暂无"}
+                  </div>
+                  {companion.favorite_method_count > 0 && (
+                    <div className="text-xs text-gray-400 mt-0.5 relative z-10">{companion.favorite_method_count} 次</div>
+                  )}
+                </div>
               </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">手机号</label>
-                <Input value={phone} readOnly placeholder="手机号"
-                  className="border-[#667eea]/15 bg-gray-50 text-gray-500 rounded-xl h-11" />
+            ) : (
+              <div className="py-8 text-center text-sm text-gray-400">加载中...</div>
+            )}
+
+            {companion?.first_record_date && (
+              <div className="mt-4 text-center text-xs text-gray-400 relative z-10">
+                自 {companion.first_record_date} 开始记录 · 感谢你的坚持
               </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">性别</label>
-                <AnimatedDropdown options={genderOptions} value={gender} onChange={setGender} theme="purple" />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">年龄</label>
-                <Input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder="年龄"
-                  className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-11" />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">身高 (cm)</label>
-                <Input type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder="身高"
-                  className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-11" />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">体重 (kg)</label>
-                <Input type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder="体重"
-                  className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-11" />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">健康目标</label>
-                <AnimatedDropdown options={healthGoalOptions} value={healthGoal} onChange={setHealthGoal} theme="purple" />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-[#667eea]/80">过敏食物（逗号分隔）</label>
-                <Input value={allergies} onChange={e => setAllergies(e.target.value)} placeholder="如: 花生,海鲜"
-                  className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-11" />
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {/* ===== 编辑信息弹窗 ===== */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowEditModal(false)} />
+          <Card className="relative z-10 w-full max-w-lg max-h-[90vh] overflow-y-auto border-0 bg-gradient-to-br from-white to-[#f8f9ff] shadow-2xl">
+            <CardContent className="p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h4 className="flex items-center gap-2 text-base font-semibold text-[#4f46b5]">
+                  <User className="h-4.5 w-4.5 text-[#667eea]" /> 编辑信息
+                </h4>
+                <button
+                  onClick={() => setShowEditModal(false)}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* 统一输入框排版：从上到下、从左到右
+                  昵称 | 手机号
+                  性别 | 年龄
+                  身高 | 体重
+                  健康目标 | 过敏食物
+                  最后一行：居中保存按钮 */}
+              <div className="grid grid-cols-2 gap-3.5">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">昵称</label>
+                  <Input value={nickname} onChange={e => setNickname(e.target.value)} placeholder="设置昵称..."
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">手机号</label>
+                  <Input value={phone} readOnly placeholder="手机号"
+                    className="border-[#667eea]/15 bg-gray-50 text-gray-500 rounded-xl h-10" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">性别</label>
+                  <Input value={gender} onChange={e => setGender(e.target.value)} placeholder="男 / 女"
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">年龄</label>
+                  <Input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder="年龄"
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">身高 (cm)</label>
+                  <Input type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder="身高"
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">体重 (kg)</label>
+                  <Input type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder="体重"
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">健康目标</label>
+                  <Input value={healthGoal} onChange={e => setHealthGoal(e.target.value)} placeholder="如: 减脂"
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">过敏食物</label>
+                  <Input value={allergies} onChange={e => setAllergies(e.target.value)} placeholder="逗号分隔"
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                </div>
+              </div>
+
+              {/* 居中保存按钮 */}
+              <div className="mt-5 flex justify-center">
+                <Button onClick={() => void saveAll()} disabled={saving}
+                  className="bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:from-[#5b6ee0] hover:to-[#6d42a0] rounded-xl px-5 h-10 shadow-md shadow-[#667eea]/20 w-full">
+                  {saving ? <LoaderCircle className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
+                  保存
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </AppShell>
   )
 }

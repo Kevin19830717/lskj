@@ -20,6 +20,7 @@ type UserService struct {
 		FindByID(ctx context.Context, userID int64) (*model.User, error)
 		Create(ctx context.Context, req *model.RegisterRequest) (*model.User, error)
 		UpdateNickname(ctx context.Context, userID int64, nickname string) error
+		UpdateAvatar(ctx context.Context, userID int64, avatarURL string) error
 	}
 	mealRepo     interface {
 		CountRecordsInRange(ctx context.Context, userID int, start, end time.Time) (int64, error)
@@ -35,6 +36,7 @@ func NewUserService(
 		FindByID(ctx context.Context, userID int64) (*model.User, error)
 		Create(ctx context.Context, req *model.RegisterRequest) (*model.User, error)
 		UpdateNickname(ctx context.Context, userID int64, nickname string) error
+		UpdateAvatar(ctx context.Context, userID int64, avatarURL string) error
 	},
 	mealRepo interface {
 		CountRecordsInRange(ctx context.Context, userID int, start, end time.Time) (int64, error)
@@ -199,6 +201,11 @@ func (s *UserService) UploadMedicalReport(ctx context.Context, userID int, req *
 
 	logrus.Infof("Medical report uploaded: user_id=%d, type=%s", userID, req.ReportType)
 	return nil
+}
+
+// UpdateAvatar 更新用户头像URL（空字符串表示重置为默认）
+func (s *UserService) UpdateAvatar(ctx context.Context, userID int, avatarURL string) error {
+	return s.userRepo.UpdateAvatar(ctx, int64(userID), avatarURL)
 }
 
 // GetUserStats 获取用户统计信息

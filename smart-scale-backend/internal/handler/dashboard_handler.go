@@ -73,13 +73,29 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		}
 	}
 
-	// 构建趋势数据（按日期升序排列）
-	var trend []model.TrendPoint
+	// 排序日期（升序）
 	dates := make([]string, 0, len(dayTotals))
 	for d := range dayTotals {
 		dates = append(dates, d)
 	}
 	sort.Strings(dates)
+
+	// 只保留最近 N 个有数据的日期（跳过没有记录的天，补齐到 N 天）
+	if len(dates) > days {
+		validDates := make(map[string]bool)
+		for _, d := range dates[len(dates)-days:] {
+			validDates[d] = true
+		}
+		for d := range dayTotals {
+			if !validDates[d] {
+				delete(dayTotals, d)
+			}
+		}
+		dates = dates[len(dates)-days:]
+	}
+
+	// 构建趋势数据（按日期升序排列）
+	var trend []model.TrendPoint
 	for _, d := range dates {
 		trend = append(trend, model.TrendPoint{
 			Date:  d,
@@ -87,13 +103,14 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		})
 	}
 
-	// 计算总餐数
-	totalMeals := int64(len(records))
+	// 计算总餐数（只统计有效日期内的记录）
+	totalMeals := int64(0)
 
 	// 计算日均营养素
 	actualDayCount := len(dayTotals)
 	var sumEnergy, sumP, sumF, sumC float64
 	for _, dn := range dayTotals {
+		totalMeals += int64(dn.MealCount)
 		sumEnergy += dn.Energy
 		sumP += dn.Protein
 		sumF += dn.Fat
@@ -132,6 +149,30 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		EnergyTrend:          trend,
 		TopFoods:             topFoods,
 		NutrientDistribution: nutrientDist,
+	}
+
+	c.JSON(http.StatusOK, model.Success(stats))
+}
+
+// GetCompanionStats 获取智能秤陪伴记录统计
+// GET /api/v1/dashboard/companion
+func (h *DashboardHandler) GetCompanionStats(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+	ctx := c.Request.Context()
+
+	stats, err := h.mealService.GetCompanionStats(ctx, int(userID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to load companion stats"))
+		return
+	}
+
+	// 烹饪方式中文标签
+	if method, ok := stats["favorite_method"].(string); ok {
+		if label, ok := model.CookingMethodLabels[model.CookingMethod(method)]; ok {
+			stats["favorite_method_label"] = label
+		} else {
+			stats["favorite_method_label"] = method
+		}
 	}
 
 	c.JSON(http.StatusOK, model.Success(stats))

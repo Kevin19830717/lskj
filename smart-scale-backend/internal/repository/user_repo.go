@@ -79,10 +79,16 @@ func (r *UserRepository) FindByID(ctx context.Context, userID int64) (*model.Use
 	return &user, nil
 }
 
-// UpdateAvatar 更新用户头像
+// UpdateAvatar 更新用户头像（空字符串设为 NULL，恢复默认头像）
 func (r *UserRepository) UpdateAvatar(ctx context.Context, userID int64, avatarURL string) error {
+	var avatarParam interface{}
+	if avatarURL == "" {
+		avatarParam = nil
+	} else {
+		avatarParam = avatarURL
+	}
 	query := `UPDATE users SET avatar_url = $1, updated_at = NOW() WHERE id = $2`
-	result, err := database.Pool.Exec(ctx, query, avatarURL, userID)
+	result, err := database.Pool.Exec(ctx, query, avatarParam, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update avatar: %w", err)
 	}

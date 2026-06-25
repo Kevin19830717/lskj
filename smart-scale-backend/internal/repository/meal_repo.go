@@ -66,12 +66,12 @@ func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page
 
 	if startDate != "" {
 		countWhere += fmt.Sprintf(" AND created_at >= $%d", paramIdx)
-		countParams = append(countParams, startDate+"T00:00:00Z")
+		countParams = append(countParams, startDate+"T00:00:00+08:00")
 		paramIdx++
 	}
 	if endDate != "" {
 		countWhere += fmt.Sprintf(" AND created_at <= $%d", paramIdx)
-		countParams = append(countParams, endDate+"T23:59:59Z")
+		countParams = append(countParams, endDate+"T23:59:59+08:00")
 		paramIdx++
 	}
 
@@ -319,6 +319,64 @@ func (r *MealRepository) DeleteArchivedRecords(ctx context.Context, userID int, 
 	return result.RowsAffected(), nil
 }
 
+// GetCompanionStats 获取智能秤陪伴记录统计（基于餐食记录）
+func (r *MealRepository) GetCompanionStats(ctx context.Context, userID int) (map[string]interface{}, error) {
+	// 总餐数 + 记录天数
+	var totalMeals int64
+	var totalDays int64
+	err := database.Pool.QueryRow(ctx,
+		`SELECT COUNT(*), COUNT(DISTINCT DATE(created_at)) FROM weigh_records WHERE user_id = $1`,
+		userID,
+	).Scan(&totalMeals, &totalDays)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get companion stats: %w", err)
+	}
+
+	// 不同食材种类数
+	var ingredientCount int64
+	err = database.Pool.QueryRow(ctx,
+		`SELECT COUNT(DISTINCT elem) FROM weigh_records, jsonb_array_elements_text(ingredients) AS elem WHERE user_id = $1`,
+		userID,
+	).Scan(&ingredientCount)
+	if err != nil {
+		ingredientCount = 0
+	}
+
+	// 最常用烹饪方式
+	var favMethod string
+	var favMethodCount int64
+	err = database.Pool.QueryRow(ctx,
+		`SELECT cooking_method, COUNT(*) as cnt FROM weigh_records WHERE user_id = $1 GROUP BY cooking_method ORDER BY cnt DESC LIMIT 1`,
+		userID,
+	).Scan(&favMethod, &favMethodCount)
+	if err != nil {
+		favMethod = ""
+		favMethodCount = 0
+	}
+
+	// 首次记录日期
+	var firstDate *time.Time
+	err = database.Pool.QueryRow(ctx,
+		`SELECT MIN(created_at) FROM weigh_records WHERE user_id = $1`,
+		userID,
+	).Scan(&firstDate)
+	if err != nil {
+		firstDate = nil
+	}
+
+	result := map[string]interface{}{
+		"total_meals":          totalMeals,
+		"total_days":           totalDays,
+		"ingredient_variety":   ingredientCount,
+		"favorite_method":      favMethod,
+		"favorite_method_count": favMethodCount,
+	}
+	if firstDate != nil {
+		result["first_record_date"] = firstDate.Format("2006-01-02")
+	}
+	return result, nil
+}
+
 // GetUsersWithRecordsBefore 获取在指定日期之前有称重记录的用户列表
 func (r *MealRepository) GetUsersWithRecordsBefore(ctx context.Context, before time.Time) ([]int, error) {
 	query := `SELECT DISTINCT user_id FROM weigh_records WHERE created_at < $1`
@@ -345,6 +403,26 @@ func (r *MealRepository) GetUsersWithSummariesBefore(ctx context.Context, before
 	rows, err := database.Pool.Query(ctx, query, before, summaryType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get users with summaries before: %w", err)
+	}
+	defer rows.Close()
+
+	var userIDs []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		userIDs = append(userIDs, id)
+	}
+	return userIDs, nil
+}
+
+// GetAllActiveUserIDs 获取所有有称重记录的用户ID列表（用于定时任务遍历）
+func (r *MealRepository) GetAllActiveUserIDs(ctx context.Context) ([]int, error) {
+	query := `SELECT DISTINCT user_id FROM weigh_records`
+	rows, err := database.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active user IDs: %w", err)
 	}
 	defer rows.Close()
 

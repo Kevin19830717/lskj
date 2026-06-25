@@ -292,8 +292,10 @@ async def chat(req: ChatRequest):
         # 3. 组装 system prompt（含用户画像 + 归档知识库）
         system_prompt = _get_chat_system_prompt(user_context, archived_summaries)
 
-        # 4. 组装 messages（仅 system + 当前用户消息，历史由 previous_response_id 管理）
+        # 4. 组装 messages（system + 历史10轮 + 当前消息；历史做兜底防止 previous_response_id 截断丢上下文）
         messages = [{"role": "system", "content": system_prompt}]
+        for h in req.history[-20:]:
+            messages.append({"role": h.role, "content": h.content})
         messages.append({"role": "user", "content": req.message})
 
         # 5. 调用 Responses API
@@ -331,6 +333,20 @@ async def get_chat_history(user_id: int, limit: int = 50):
     return {"history": history}
 
 
+@router.post("/chat/reset", summary="重置对话")
+async def reset_chat(user_id: int):
+    """删除用户所有聊天记录和对话状态"""
+    try:
+        async with get_connection() as conn:
+            await conn.execute("DELETE FROM chat_messages WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM ai_conversation_state WHERE user_id = $1", user_id)
+        logger.info(f"Chat reset for user={user_id}")
+        return {"status": "ok", "message": "对话已重置"}
+    except Exception as e:
+        logger.error(f"Chat reset failed for user={user_id}: {e}")
+        raise HTTPException(status_code=500, detail="重置失败")
+
+
 @router.post("/chat/stream", summary="AI健康对话(流式)")
 async def chat_stream(req: ChatRequest):
     """
@@ -354,7 +370,18 @@ async def chat_stream(req: ChatRequest):
             )
             system_prompt = _get_chat_system_prompt(user_context, archived_summaries)
 
+            # 简单问候消息跳过历史上下文(previous_response_id)，
+            # 避免加载完整对话历史导致首字延迟过高（如"你好"原本要16-18s）
+            use_history = not _is_simple_message(req.message)
+            if not use_history:
+                prev_response_id = ""
+                logger.info(f"Simple message detected, skipping previous_response_id for user={req.user_id}")
+
             messages = [{"role": "system", "content": system_prompt}]
+            # 注入最近历史对话（10轮=20条），确保上下文不丢失
+            # previous_response_id 可能因长回复被截断，这里提供可靠兜底
+            for h in req.history[-20:]:
+                messages.append({"role": h.role, "content": h.content})
             messages.append({"role": "user", "content": req.message})
 
             payload = {
@@ -438,6 +465,32 @@ async def _get_last_response_id(user_id: int) -> str:
     except Exception as e:
         logger.warning(f"Failed to get last response_id: {e}")
         return ""
+
+
+# 常见问候/简单消息，这类消息不需要加载历史上下文，跳过 previous_response_id 可大幅加速响应
+_SIMPLE_GREETINGS = {
+    "你好", "您好", "hi", "hello", "hey", "嗨", "在吗", "在么", "在不在",
+    "早", "早上好", "中午好", "下午好", "晚上好", "晚安",
+    "谢谢", "感谢", "ok", "好的", "嗯", "收到", "了解",
+}
+
+
+def _is_simple_message(message: str) -> bool:
+    """判断是否为简单/问候消息。
+    这类消息无需 previous_response_id（避免加载完整历史上下文，可大幅降低首字延迟）。
+    """
+    msg = message.strip().lower()
+    if not msg:
+        return True
+    if msg in _SIMPLE_GREETINGS:
+        return True
+    # 极短且不含问号或饮食/健康关键词，视为闲聊
+    if len(msg) <= 6 and "?" not in msg and "？" not in msg:
+        diet_kw = ("吃", "营养", "热量", "卡路里", "蛋白质", "脂肪", "碳水", "饮食",
+                   "减脂", "增肌", "健康", "食谱", "秤", "称重")
+        if not any(k in msg for k in diet_kw):
+            return True
+    return False
 
 
 async def _save_response_id(user_id: int, response_id: str):

@@ -221,11 +221,14 @@ func (r *FoodRepository) Count(ctx context.Context) (int64, error) {
 }
 
 // GetTopFoods 获取用户最常食用的食物排行
+// 以用户最后一条记录日期为基准，而非当前时间
 func (r *FoodRepository) GetTopFoods(ctx context.Context, userID int, days, limit int) ([]model.FoodFrequency, error) {
 	query := `
 		SELECT elem as food_name_en, COUNT(*) as cnt
 		FROM weigh_records, jsonb_array_elements_text(ingredients) AS elem
-		WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '1 day' * $2
+		WHERE user_id = $1 
+		  AND created_at >= (SELECT COALESCE(MAX(created_at), NOW()) FROM weigh_records WHERE user_id = $1) - INTERVAL '1 day' * $2
+		  AND created_at <= (SELECT COALESCE(MAX(created_at), NOW()) FROM weigh_records WHERE user_id = $1) + INTERVAL '1 day'
 		GROUP BY elem ORDER BY cnt DESC LIMIT $3`
 
 	rows, err := database.Pool.Query(ctx, query, userID, days, limit)

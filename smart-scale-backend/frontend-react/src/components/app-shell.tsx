@@ -79,7 +79,6 @@ export default function AppShell({
     typeof window !== "undefined" ? localStorage.getItem("sidebar-collapsed") === "1" : false
   )
   const [user, setUser] = useState<SessionUser>({})
-  const [avatarUrl, setAvatarUrl] = useState<string>("")
 
   useEffect(() => {
     if (!hasToken) {
@@ -88,20 +87,15 @@ export default function AppShell({
     }
 
     setUser(getStoredUser())
-    setAvatarUrl(localStorage.getItem("user_avatar") || "")
 
     const syncUser = () => {
       setUser(getStoredUser())
-      setAvatarUrl(localStorage.getItem("user_avatar") || "")
     }
     window.addEventListener("storage", syncUser)
     window.addEventListener(USER_UPDATED_EVENT, syncUser)
-    // 监听头像更新事件（ProfilePage 更新头像后触发）
-    window.addEventListener("avatar-updated", syncUser)
     return () => {
       window.removeEventListener("storage", syncUser)
       window.removeEventListener(USER_UPDATED_EVENT, syncUser)
-      window.removeEventListener("avatar-updated", syncUser)
     }
   }, [hasToken, navigate])
 
@@ -235,11 +229,7 @@ export default function AppShell({
               onClick={() => navigate("/profile")}
               title={collapsed ? displayName : ""}
             >
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="头像" className="h-full w-full object-cover" />
-              ) : (
-                userInitial
-              )}
+              {userInitial}
             </button>
             {!collapsed && (
               <div className="flex-1 flex flex-col items-start min-w-0 px-1">

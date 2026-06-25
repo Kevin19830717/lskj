@@ -192,3 +192,33 @@ func (h *ChatHandler) ChatHistory(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, model.Success(ragData))
 }
+
+// ResetChat 重置对话（删除聊天记录+清空状态）
+// POST /api/v1/ai/chat/reset
+func (h *ChatHandler) ResetChat(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+
+	ragURL := fmt.Sprintf("%s/api/v1/rag/chat/reset?user_id=%d", h.ragBaseURL, userID)
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", ragURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to create request"))
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "AI服务暂时不可用"))
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "AI服务响应异常"))
+		return
+	}
+
+	var ragData map[string]interface{}
+	json.Unmarshal(respBody, &ragData)
+	c.JSON(http.StatusOK, model.Success(ragData))
+}

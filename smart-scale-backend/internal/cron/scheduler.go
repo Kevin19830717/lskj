@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"time"
 
 	"smart-scale-backend/internal/config"
 	"smart-scale-backend/internal/service"
@@ -57,48 +58,55 @@ func (s *Scheduler) Stop() {
 	logrus.Info("Cron scheduler stopped")
 }
 
-// dailyArchive 每日凌晨执行数据分层归档
+// dailyArchive 每日凌晨2点执行：为昨天生成日报 + 数据分层归档
 func (s *Scheduler) dailyArchive() {
 	logrus.Info("=== Starting daily archive task ===")
 	ctx := context.Background()
 
-	// 1. 原始记录 > 1个月 → 聚合为日度汇总
-	if err := s.summarSvc.ArchiveRawToDaily(ctx); err != nil {
-		logrus.WithError(err).Error("Failed to archive raw records to daily summaries")
+	// Step 1: 为昨天有记录的所有用户生成日报
+	yesterday := time.Now().AddDate(0, 0, -1)
+	userIDs, err := s.summarSvc.GetAllActiveUserIDs(ctx)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get active user list")
 	} else {
-		logrus.Info("Completed: raw → daily archive")
+		for _, uid := range userIDs {
+			if _, genErr := s.summarSvc.GenerateDailyForDate(ctx, uid, yesterday); genErr != nil {
+				logrus.WithError(genErr).Warnf("Daily summary failed for user %d", uid)
+			}
+		}
+		logrus.Infof("Generated daily summaries for yesterday (%s): %d users checked", yesterday.Format("2006-01-02"), len(userIDs))
 	}
 
-	// 2. 日度汇总 > 3个月 → 聚合为周度摘要
-	if err := s.summarSvc.ArchiveDailyToWeekly(ctx); err != nil {
-		logrus.WithError(err).Error("Failed to archive daily to weekly summaries")
-	} else {
-		logrus.Info("Completed: daily → weekly archive")
-	}
-
-	// 3. 周度摘要 > 1年 → 聚合为月度摘要
-	if err := s.summarSvc.ArchiveWeeklyToMonthly(ctx); err != nil {
-		logrus.WithError(err).Error("Failed to archive weekly to monthly summaries")
-	} else {
-		logrus.Info("Completed: weekly → monthly archive")
-	}
-
-	// 4. 月度汇总 > 3年 → 聚合为年度摘要
-	if err := s.summarSvc.ArchiveMonthlyToYearly(ctx); err != nil {
-		logrus.WithError(err).Error("Failed to archive monthly to yearly summaries")
-	} else {
-		logrus.Info("Completed: monthly → yearly archive")
+	// Step 2: 数据分层归档（旧数据聚合）
+	if err := s.summarSvc.RunArchiveJob(ctx); err != nil {
+		logrus.WithError(err).Error("Archive job failed")
 	}
 
 	logrus.Info("=== Daily archive task completed ===")
 }
 
-// weeklyAdvice 每周一生成上周营养摘要并触发RAG建议
+// weeklyAdvice 每周一早上8点：为每个活跃用户生成上周周报
 func (s *Scheduler) weeklyAdvice() {
-	logrus.Info("=== Starting weekly RAG advice task ===")
+	logrus.Info("=== Starting weekly report generation task ===")
+	ctx := context.Background()
 
-	// 获取所有活跃用户，为每个用户生成周报和建议
-	// 实际实现中应从数据库查询用户列表
+	// 获取所有活跃用户
+	userIDs, err := s.summarSvc.GetAllActiveUserIDs(ctx)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to get active user list for weekly report")
+		return
+	}
 
-	logrus.Info("=== Weekly RAG advice task completed ===")
+	generatedCount := 0
+	for _, uid := range userIDs {
+		summary, genErr := s.summarSvc.GenerateWeeklySummary(ctx, uid)
+		if genErr != nil {
+			logrus.WithError(genErr).Warnf("Weekly summary failed for user %d", uid)
+		}
+		if summary != nil {
+			generatedCount++
+		}
+	}
+
+	logrus.Infof("=== Weekly report task completed: %d/%d users generated ===", generatedCount, len(userIDs))
 }

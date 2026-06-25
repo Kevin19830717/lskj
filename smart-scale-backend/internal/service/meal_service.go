@@ -139,9 +139,24 @@ func (s *MealService) GetRecentMeals(ctx context.Context, userID int, limit int)
 	return s.mealRepo.GetRecentMeals(ctx, userID, limit)
 }
 
-// GetMealsInDays 获取最近N天的所有餐食记录
+// GetCompanionStats 获取智能秤陪伴记录统计
+func (s *MealService) GetCompanionStats(ctx context.Context, userID int) (map[string]interface{}, error) {
+	return s.mealRepo.GetCompanionStats(ctx, userID)
+}
+
+// GetMealsInDays 获取最近N天有数据的餐食记录
+// 以用户最后一条记录的日期为结束日，往前查询足够范围确保包含N个有数据的天
 func (s *MealService) GetMealsInDays(ctx context.Context, userID int, days int) ([]*model.WeighRecord, error) {
-	start := time.Now().AddDate(0, 0, -days)
-	end := time.Now().AddDate(0, 0, 1)
+	// 获取用户最后一条记录的时间
+	lastActivity, err := s.mealRepo.GetLastActivity(ctx, userID)
+	if err != nil || lastActivity.IsZero() {
+		// 无记录时回退到当前时间
+		start := time.Now().AddDate(0, 0, -days)
+		end := time.Now().AddDate(0, 0, 1)
+		return s.mealRepo.QueryRecordsByDateRange(ctx, userID, start, end)
+	}
+	// 以最后记录日为结束日，往前查 days*4 天作为缓冲（确保有足够有数据的天）
+	end := lastActivity.AddDate(0, 0, 1) // +1天包含最后记录日全天
+	start := lastActivity.AddDate(0, 0, -(days * 4))
 	return s.mealRepo.QueryRecordsByDateRange(ctx, userID, start, end)
 }

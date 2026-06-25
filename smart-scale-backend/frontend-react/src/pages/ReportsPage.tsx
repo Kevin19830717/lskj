@@ -1,404 +1,467 @@
-import { useEffect, useMemo, useState } from "react"
-import { motion } from "framer-motion"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import AppShell from "@/components/app-shell"
 import { Card, CardContent } from "@/components/ui/card"
-import { ParticleButton } from "@/components/particle-button"
+import { Button } from "@/components/ui/button"
 import { AnimatedDropdown, type DropdownOption } from "@/components/animated-dropdown"
-import { apiGet, apiPost, type AnalysisSummary, type SummaryInsights } from "@/lib/api"
-import { FileText, LoaderCircle, Sparkles, X, Clock, Info, Apple, Lightbulb } from "lucide-react"
+import { AnimatedNumber } from "@/components/fx"
+import { apiGet, apiPost, apiDelete, type AnalysisSummary } from "@/lib/api"
+import { FileText, Clock, Trash2, RefreshCw, Zap, ChevronLeft, ChevronRight, Trash, X, ChevronsLeft, ChevronsRight, Info, Apple, Lightbulb } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
+
+const PAGE_SIZE = 10
+
+// ============ 报告类型配置：标签 + 颜色 + 底色 ============
+const TYPE_TAGS: Record<string, { label: string; from: string; to: string; emoji: string; bg: string }> = {
+  daily:   { label: "日报",   from: "#22c55e", to: "#16a34a", emoji: "📅", bg: "#dcfce7" },
+  weekly:  { label: "周报",   from: "#38bdf8", to: "#0284c7", emoji: "📊", bg: "#dbeafe" },
+  monthly: { label: "月报",   from: "#fb923c", to: "#ea580c", emoji: "📈", bg: "#ffedd5" },
+  yearly:  { label: "年报",   from: "#c084fc", to: "#7e22ce", emoji: "🏆", bg: "#f3e8ff" },
+}
 
 const summaryTypeOptions: DropdownOption[] = [
-  { value: "weekly", label: "周报" },
-  { value: "daily", label: "日报" },
-  { value: "monthly", label: "月报" },
-  { value: "yearly", label: "年报" },
+  { value: "daily", label: "📅 日报" },
+  { value: "weekly", label: "📊 周报" },
+  { value: "monthly", label: "📈 月报" },
+  { value: "yearly", label: "🏆 年报" },
 ]
 
-function formatDate(dateStr?: string) {
-  if (!dateStr) return "-"
-  const date = new Date(dateStr)
-  if (Number.isNaN(date.getTime())) return dateStr
-  return date.toLocaleDateString("zh-CN")
-}
-
-// 中文标签映射
 const INSIGHTS_LABELS: Record<string, string> = {
-  period_start: "周期开始",
-  period_end: "周期结束",
-  total_meals: "餐次",
-  total_energy_kcal: "总热量",
-  avg_daily_energy_kcal: "日均热量",
-  total_protein_g: "总蛋白质",
-  total_fat_g: "总脂肪",
-  total_carbohydrate_g: "总碳水",
-  total_sodium_mg: "总钠",
-  total_cholesterol_mg: "总胆固醇",
-  total_vitamin_c_mg: "总维生素C",
-  total_calcium_mg: "总钙",
-  total_iron_mg: "总铁",
-  total_potassium_mg: "总钾",
+  period_start: "周期开始", period_end: "周期结束", total_meals: "餐次",
+  total_energy_kcal: "总热量", avg_daily_energy_kcal: "日均热量",
+  total_protein_g: "蛋白质", total_fat_g: "脂肪", total_carbohydrate_g: "碳水",
+  total_sodium_mg: "钠", total_cholesterol_mg: "胆固醇",
+  total_vitamin_c_mg: "维生素C", total_calcium_mg: "钙",
+  total_iron_mg: "铁", total_potassium_mg: "钾",
   health_score: "健康评分",
 }
-
-// 隐藏在"基本信息"中的字段
 const HIDDEN_KEYS = new Set(["top_foods", "recommendations", "nutrient_trend", "name"])
-
 const TAB_ITEMS = [
   { id: "basic", label: "基本信息", icon: Info },
   { id: "foods", label: "常吃食物", icon: Apple },
-  { id: "advice", label: "AI 建议", icon: Lightbulb },
+  { id: "advice", label: "建议", icon: Lightbulb },
 ] as const
 
-function metricEntries(insights?: SummaryInsights) {
-  if (!insights) return []
-  return [
-    { key: "total_energy_kcal", label: "总热量", value: insights.total_energy_kcal, unit: "kcal" },
-    { key: "avg_daily_energy_kcal", label: "日均热量", value: insights.avg_daily_energy_kcal, unit: "kcal" },
-    { key: "total_meals", label: "餐次", value: insights.total_meals, unit: "次" },
-    { key: "total_protein_g", label: "蛋白质", value: insights.total_protein_g, unit: "g" },
-    { key: "total_fat_g", label: "脂肪", value: insights.total_fat_g, unit: "g" },
-    { key: "total_carbohydrate_g", label: "碳水", value: insights.total_carbohydrate_g, unit: "g" },
-  ].filter((m) => m.value != null && m.value !== 0)
+function fmtDate(v?: string) {
+  if (!v) return "-"; const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString("zh-CN")
+}
+function rv(v: unknown) {
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(1)
+  if (Array.isArray(v)) return v.join(", ")
+  if (typeof v === "object" && v !== null) return JSON.stringify(v)
+  return String(v)
 }
 
-function renderValue(value: unknown) {
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(1)
-  if (Array.isArray(value)) return value.join(", ")
-  if (typeof value === "object" && value !== null) return JSON.stringify(value)
-  return String(value)
-}
-
-// ============================================================
-// 详情模态框 — 浅白背景 + AnimatedTabs 风格
-// ============================================================
+// ============ 详情弹窗 ============
 function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onClose: () => void }) {
-  const [activeTab, setActiveTab] = useState<string>("basic")
+  const [activeTab, setActiveTab] = useState("basic")
+  const tg = TYPE_TAGS[summary.summary_type] ?? TYPE_TAGS.daily
+  const ins = summary.insights
+  const isDaily = summary.summary_type === "daily"
 
-  const detailRows = useMemo(() => {
-    if (!summary.insights) return []
-    return Object.entries(summary.insights)
-      .filter(([key]) => !HIDDEN_KEYS.has(key))
-      .map(([key, value]) => ({ key, label: INSIGHTS_LABELS[key] || key, value }))
-  }, [summary])
+  // 日均除数（与后端 mergeInsights 保持一致：周=7，月=30，年=365）
+  const periodDiv = useMemo(() => {
+    switch (summary.summary_type) {
+      case "weekly": return 7
+      case "monthly": return 30
+      case "yearly": return 365
+      default: return 1
+    }
+  }, [summary.summary_type])
 
-  // 将基本信息分组：周期、概览、宏量营养素、微量元素
-  const groupedRows = useMemo(() => {
-    const groups: { title: string; rows: typeof detailRows }[] = []
-    const periodKeys = ["period_start", "period_end", "total_meals"]
-    const macroKeys = ["total_energy_kcal", "avg_daily_energy_kcal", "total_protein_g", "total_fat_g", "total_carbohydrate_g"]
+  const g = (k: string): string => INSIGHTS_LABELS[k] || k
+  const v = (k: string) => ins?.[k]
+  const avg = (k: string) => { const t = typeof v(k) === "number" ? (v(k) as number) : 0; return t / periodDiv }
+
+  type InfoItem = { label: string; value: string | number; unit: string; color?: string }
+  const basicGroups = useMemo(() => {
+    if (!ins) return [] as { label: string; items: InfoItem[] }[]
+    const dark = tg.to, light = tg.from
+    const groups: { label: string; items: InfoItem[] }[] = []
+
+    // 基本营养素（全部深色）
+    const macros: InfoItem[] = []
+    macros.push({ label: "总热量", value: rv(v("total_energy_kcal")), unit: "kcal", color: dark })
+    if (!isDaily) macros.push({ label: "日均热量", value: ins.avg_daily_energy_kcal != null ? rv(ins.avg_daily_energy_kcal) : rv(avg("total_energy_kcal")), unit: "kcal", color: dark })
+    macros.push({ label: "总蛋白质", value: rv(v("total_protein_g")), unit: "g", color: dark })
+    if (!isDaily) macros.push({ label: "日均蛋白质", value: rv(avg("total_protein_g")), unit: "g", color: dark })
+    macros.push({ label: "总脂肪", value: rv(v("total_fat_g")), unit: "g", color: dark })
+    if (!isDaily) macros.push({ label: "日均脂肪", value: rv(avg("total_fat_g")), unit: "g", color: dark })
+    macros.push({ label: "总碳水", value: rv(v("total_carbohydrate_g")), unit: "g", color: dark })
+    if (!isDaily) macros.push({ label: "日均碳水", value: rv(avg("total_carbohydrate_g")), unit: "g", color: dark })
+    groups.push({ label: "基本营养素", items: macros })
+
+    // 微量元素（统一浅色）
     const microKeys = ["total_sodium_mg", "total_cholesterol_mg", "total_vitamin_c_mg", "total_calcium_mg", "total_iron_mg", "total_potassium_mg"]
-    const otherKeys = ["health_score"]
+    const microUnits: Record<string, string> = { total_sodium_mg: "mg", total_cholesterol_mg: "mg", total_vitamin_c_mg: "mg", total_calcium_mg: "mg", total_iron_mg: "mg", total_potassium_mg: "mg" }
+    const microItems = microKeys.filter(k => v(k) != null).map(k => ({
+      label: g(k), value: rv(v(k)), unit: microUnits[k] || "", color: light,
+    }))
+    if (microItems.length > 0) groups.push({ label: "微量元素", items: microItems })
 
-    const period = detailRows.filter(r => periodKeys.includes(r.key))
-    const macro = detailRows.filter(r => macroKeys.includes(r.key))
-    const micro = detailRows.filter(r => microKeys.includes(r.key))
-    const other = detailRows.filter(r => ![...periodKeys, ...macroKeys, ...microKeys].includes(r.key))
+    // 周期（仅非日报显示，黑色，放最后）
+    if (!isDaily) {
+      groups.push({
+        label: "周期",
+        items: [
+          { label: "周期开始", value: typeof v("period_start") === "string" ? v("period_start") as string : "", unit: "", color: "#111827" },
+          { label: "周期结束", value: typeof v("period_end") === "string" ? v("period_end") as string : "", unit: "", color: "#111827" },
+        ],
+      })
+    }
 
-    if (period.length) groups.push({ title: "周期信息", rows: period })
-    if (macro.length) groups.push({ title: "热量与宏量营养素", rows: macro })
-    if (micro.length) groups.push({ title: "微量元素", rows: micro })
-    if (other.length) groups.push({ title: "其他", rows: other })
     return groups
-  }, [detailRows])
+  }, [ins, isDaily, periodDiv, tg])
 
-  const topFoods = summary.insights?.top_foods ?? []
-  const recommendations = summary.insights?.recommendations ?? []
-  const maxCount = Math.max(...topFoods.map((f) => f.count), 1)
+  const topFoods = (ins?.top_foods ?? []) as Array<{ name?: string; name_en?: string; count: number; total_weight_g?: number }>
+  const recommendations = (ins?.recommendations ?? []) as string[]
+  const maxCount = Math.max(...topFoods.map(f => f.count), 1)
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4 py-8" onClick={onClose}>
-      <div
-        className="w-full max-w-3xl overflow-hidden rounded-3xl bg-gradient-to-br from-white via-[#fafbff] to-[#f0f4ff] shadow-2xl border border-gray-200/60"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* 顶部标题栏 */}
-        <div className="flex items-center justify-between border-b border-gray-200/60 px-6 py-4 bg-gradient-to-r from-[#f0f4ff]/50 to-transparent">
+      <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-3xl bg-white border border-gray-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b px-6 py-4 sticky top-0 z-10" style={{ backgroundColor: tg.bg }}>
           <div>
-            <h4 className="text-lg font-semibold text-gray-900">
-              {summary.summary_type}报告 · {formatDate(summary.summary_date)}
+            <h4 className="text-lg font-semibold flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-bold text-white"
+                style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}>{tg.emoji} {tg.label}</span>
+              {fmtDate(summary.summary_date)}
             </h4>
-            <p className="text-sm text-gray-500">数据来源：{summary.source}</p>
+            <p className="text-xs text-gray-500 mt-1">{!isDaily ? `共 ${periodDiv} 天` : ""}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <button onClick={onClose} className="rounded-full p-2 text-gray-400 hover:bg-gray-100"><X className="h-5 w-5" /></button>
         </div>
-
-        {/* Tabs 导航 */}
         <div className="px-6 pt-4">
-          <div className="flex gap-2 flex-wrap bg-gray-100/80 p-1 rounded-xl border border-gray-200/60">
-            {TAB_ITEMS.map((tab) => {
+          <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+            {TAB_ITEMS.map(tab => {
               const Icon = tab.icon
               return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className="relative px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:text-gray-900 outline-none transition-colors"
-                >
-                  {activeTab === tab.id && (
-                    <motion.div
-                      layoutId="report-active-tab"
-                      className="absolute inset-0 bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] !rounded-lg"
-                      transition={{ type: "spring", duration: 0.6 }}
-                    />
-                  )}
-                  <span className="relative z-10 flex items-center gap-1.5">
-                    <Icon className={`h-4 w-4 ${activeTab === tab.id ? "text-[#667eea]" : ""}`} />
-                    {tab.label}
-                  </span>
+                <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                  className="relative px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:text-gray-900">
+                  {activeTab === tab.id && <motion.div layoutId="report-detail-tab" className="absolute inset-0 bg-white shadow rounded-lg" transition={{ type: "spring", duration: 0.5 }} />}
+                  <span className="relative z-10 flex items-center gap-1.5"><Icon className="h-4 w-4" />{tab.label}</span>
                 </button>
               )
             })}
           </div>
         </div>
-
-        {/* 内容区 */}
-        <div className="p-6 max-h-[65vh] overflow-y-auto">
-          <div className="bg-white/80 shadow-[0_2px_12px_rgba(0,0,0,0.04)] text-gray-800 rounded-xl border border-gray-200/60 min-h-[280px] p-5">
+        <div className="p-6 min-h-[380px] relative">
+          <AnimatePresence mode="popLayout">
+            {/* ===== 基本信息 ===== */}
             {activeTab === "basic" && (
-              <motion.div
-                key="basic"
-                initial={{ opacity: 0, scale: 0.95, x: -10, filter: "blur(10px)" }}
-                animate={{ opacity: 1, scale: 1, x: 0, filter: "blur(0px)" }}
-                transition={{ duration: 0.5, ease: "circInOut" }}
-              >
-                <div className="flex items-center gap-2 mb-5">
-                  <Info className="h-5 w-5 text-[#667eea]" />
-                  <h5 className="text-base font-semibold text-gray-900">基本信息</h5>
-                </div>
-                {groupedRows.length === 0 ? (
-                  <p className="text-center text-gray-400 py-10">暂无基本数据</p>
-                ) : (
-                  <div className="space-y-5">
-                    {groupedRows.map((group) => (
-                      <div key={group.title}>
-                        <h6 className="text-xs font-semibold text-[#667eea] uppercase tracking-wider mb-2.5">{group.title}</h6>
-                        <div className="grid gap-2.5 sm:grid-cols-2">
-                          {group.rows.map((row) => (
-                            <div
-                              key={row.key}
-                              className="flex items-center justify-between rounded-lg bg-gradient-to-r from-[#f8f9ff] to-[#f0f4ff] border border-[#667eea]/10 px-3.5 py-2.5"
-                            >
-                              <span className="text-sm text-gray-500">{row.label}</span>
-                              <span className="text-sm font-semibold text-gray-800">
-                                {renderValue(row.value)}
-                              </span>
-                            </div>
-                          ))}
+              <motion.div key="basic" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.25, ease: "easeOut" }}>
+                {basicGroups.length === 0 ? <p className="text-gray-400 text-center py-8">暂无基本数据</p> : (
+                  <div className="space-y-4 overflow-hidden">
+                    {basicGroups.map((group, gi) => {
+                      const isNum = (v: string | number) => typeof v === "number" || (!Number.isNaN(Number(v)) && v !== "" && v !== "-")
+                      const isPeriod = group.label === "周期"
+                      const cardBg = isPeriod
+                        ? "bg-white border border-gray-200"
+                        : `bg-gradient-to-br from-white to-[${tg.bg}] border border-[${tg.from}]/20`
+                      return (
+                        <div key={gi}>
+                          <h6 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">{group.label}</h6>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {group.items.map((item, ii) => (
+                              <motion.div key={ii}
+                                initial={{ x: 20, opacity: 0 }}
+                                animate={{ x: 0, opacity: 1 }}
+                                transition={{ duration: 0.3, delay: ii * 0.05, ease: [0.22, 1, 0.36, 1] }}
+                                className={`flex items-center justify-between rounded-xl px-3 py-2.5 shadow-sm ${cardBg}`}>
+                                <span className="text-xs text-gray-500 font-medium">{item.label}</span>
+                                <span className="text-xs font-bold flex items-baseline" style={item.color ? { color: item.color } : undefined}>
+                                  {isNum(item.value) ? (
+                                    <AnimatedNumber value={Number(item.value)} duration={0.6} decimals={1} />
+                                  ) : item.value}
+                                  {item.unit ? <span className="ml-0.5 text-[10px] text-gray-400 font-normal">{item.unit}</span> : null}
+                                </span>
+                              </motion.div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </motion.div>
             )}
 
+            {/* ===== 常吃食物 ===== */}
             {activeTab === "foods" && (
-              <motion.div
-                key="foods"
-                initial={{ opacity: 0, scale: 0.95, x: -10, filter: "blur(10px)" }}
-                animate={{ opacity: 1, scale: 1, x: 0, filter: "blur(0px)" }}
-                transition={{ duration: 0.5, ease: "circInOut" }}
-              >
-                <div className="flex items-center gap-2 mb-4">
-                  <Apple className="h-5 w-5 text-[#667eea]" />
-                  <h5 className="text-base font-semibold text-gray-900">常吃食物排行</h5>
-                </div>
-                {topFoods.length === 0 ? (
-                  <p className="text-center text-gray-400 py-10">暂无常吃食物数据</p>
-                ) : (
-                  <div className="space-y-3">
-                    {topFoods.slice(0, 10).map((food, i) => (
-                      <div key={`${food.name}-${i}`} className="flex items-center gap-3">
-                        <span className="w-7 text-sm font-bold text-gray-400 flex-shrink-0 text-center">{i + 1}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between text-sm mb-1.5">
-                            <span className="text-gray-800 truncate font-medium">{food.name || food.name_en}</span>
-                            <span className="text-gray-400 text-xs">{food.count}次</span>
-                          </div>
-                          <div className="h-2 rounded-full bg-gray-100">
-                            <div
-                              className="h-full rounded-full bg-gradient-to-r from-[#667eea] to-[#764ba2]"
-                              style={{ width: `${(food.count / maxCount) * 100}%` }}
+              <motion.div key="foods" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.25, ease: "easeOut" }}>
+                {topFoods.length === 0 ? <p className="text-gray-400 text-center py-8">暂无数据</p> : (
+                  isDaily ? (
+                    /* 日报：垂直柱状图 */
+                    <div className="flex justify-around items-stretch border-b border-gray-200" style={{ height: "260px", padding: "20px 8px 0" }}>
+                      {topFoods.slice(0, 8).map((f, i) => {
+                        const barPx = Math.max(20, Math.round((f.count / maxCount) * 220))
+                        return (
+                          <div key={`${f.name || f.name_en}-${i}`} className="flex flex-col items-center justify-end" style={{ width: "34px" }}>
+                            <span className="text-[10px] text-gray-400 font-medium leading-none mb-1">{f.count}次</span>
+                            <motion.div
+                              className="rounded-t-md w-full"
+                              style={{ backgroundImage: `linear-gradient(to top, ${tg.to}, ${tg.from})` }}
+                              initial={{ height: 0 }}
+                              animate={{ height: barPx }}
+                              transition={{ duration: 0.5, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] }}
                             />
+                            <span className="text-[10px] text-gray-600 truncate w-full text-center leading-none mt-1">{(f.name || f.name_en || "").slice(0, 3)}</span>
                           </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    /* 周/月/年报：水平进度条 */
+                    <div className="space-y-3">
+                      {topFoods.slice(0, 10).map((f, i) => (
+                        <div key={`${f.name || f.name_en}-${i}`} className="flex items-center gap-3">
+                          <span className="w-6 text-sm font-bold text-gray-400 text-center">{i + 1}</span>
+                          <div className="flex-1">
+                            <div className="flex justify-between text-sm mb-1"><span className="font-medium">{f.name || f.name_en}</span><span className="text-gray-400 text-xs">{f.count}次</span></div>
+                            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                              <motion.div className="h-full rounded-full"
+                                style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}
+                                initial={{ width: 0 }}
+                                animate={{ width: `${(f.count / maxCount) * 100}%` }}
+                                transition={{ duration: 0.6, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] }} />
+                            </div>
+                          </div>
+                          {f.total_weight_g ? <span className="text-xs text-gray-400 w-12 text-right">{Math.round(f.total_weight_g)}g</span> : null}
                         </div>
-                        {food.total_weight_g > 0 && (
-                          <span className="text-xs text-gray-400 flex-shrink-0 w-16 text-right">
-                            {Math.round(food.total_weight_g)}g
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )
                 )}
               </motion.div>
             )}
 
+            {/* ===== 建议 ===== */}
             {activeTab === "advice" && (
-              <motion.div
-                key="advice"
-                initial={{ opacity: 0, scale: 0.95, x: -10, filter: "blur(10px)" }}
-                animate={{ opacity: 1, scale: 1, x: 0, filter: "blur(0px)" }}
-                transition={{ duration: 0.5, ease: "circInOut" }}
-              >
-                <div className="flex items-center gap-2 mb-4">
-                  <Lightbulb className="h-5 w-5 text-[#667eea]" />
-                  <h5 className="text-base font-semibold text-gray-900">AI 建议</h5>
-                </div>
-                {recommendations.length === 0 ? (
-                  <p className="text-center text-gray-400 py-10">暂无 AI 建议</p>
-                ) : (
+              <motion.div key="advice" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.25, ease: "easeOut" }}>
+                {recommendations.length === 0 ? <p className="text-gray-400 text-center py-8">暂无建议</p> : (
                   <div className="space-y-3">
-                    {recommendations.map((item, index) => (
-                      <div
-                        key={`${index}`}
-                        className="flex gap-3 rounded-xl bg-gradient-to-r from-[#f0f4ff] to-[#f8f9ff] border border-[#667eea]/15 px-4 py-3"
-                      >
-                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white text-xs font-bold flex items-center justify-center">
-                          {index + 1}
-                        </span>
-                        <p className="text-sm text-gray-700 leading-relaxed">{item}</p>
+                    {recommendations.map((item, idx) => (
+                      <div key={idx} className="flex gap-3 rounded-xl px-4 py-3" style={{ backgroundColor: tg.bg }}>
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full text-white text-xs font-bold flex items-center justify-center" style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}>{idx + 1}</span>
+                        <p className="text-sm text-gray-700">{item}</p>
                       </div>
                     ))}
                   </div>
                 )}
               </motion.div>
             )}
-          </div>
+          </AnimatePresence>
         </div>
       </div>
     </div>
   )
 }
 
+// ============ 主页面 ============
 export default function ReportsPage() {
-  const [summaryType, setSummaryType] = useState("weekly")
+  const [summaryType, setSummaryType] = useState("daily")
   const [summaries, setSummaries] = useState<AnalysisSummary[]>([])
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [generating, setGenerating] = useState(false)
-  const [selectedSummary, setSelectedSummary] = useState<AnalysisSummary | null>(null)
+  const [selected, setSelected] = useState<AnalysisSummary | null>(null)
   const [feedback, setFeedback] = useState("")
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [backfilling, setBackfilling] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [animKey, setAnimKey] = useState(0) // 动画触发 key
 
-  useEffect(() => {
-    let cancelled = false
-    async function fetchSummaries() {
-      setLoading(true)
-      const res = await apiGet<AnalysisSummary[]>(`/summaries?type=${summaryType}&limit=20`)
-      if (!cancelled) {
-        setSummaries(res.data ?? [])
-        setLoading(false)
-      }
+  const fetchPage = useCallback(async (p: number, type: string) => {
+    setLoading(true)
+    const res = await apiGet<{ items: AnalysisSummary[]; total: number; total_pages: number }>(
+      `/summaries?type=${type}&page=${p}&page_size=${PAGE_SIZE}`
+    )
+    if (res.data) {
+      setSummaries(res.data.items ?? [])
+      setTotal(res.data.total ?? 0)
+      setTotalPages(res.data.total_pages ?? 1)
     }
+    setLoading(false)
+    setAnimKey(k => k + 1)
+  }, [])
 
-    fetchSummaries().catch(() => {
-      if (!cancelled) setLoading(false)
-    })
+  useEffect(() => { setPage(1); fetchPage(1, summaryType).catch(() => setLoading(false)) }, [summaryType, fetchPage])
 
-    return () => {
-      cancelled = true
-    }
-  }, [summaryType])
+  const handleDelete = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm("确定删除？")) return
+    setDeletingId(id)
+    const res = await apiDelete(`/summaries/${id}`)
+    if (res.code === 0) { setFeedback("已删除"); fetchPage(page, summaryType) }
+    else setFeedback("删除失败：" + res.message)
+    setDeletingId(null)
+    setTimeout(() => setFeedback(""), 3000)
+  }
+
+  const handleClearAll = async () => {
+    const cn = TYPE_TAGS[summaryType]?.label || summaryType
+    if (!confirm(`确定清除全部 ${cn}？只有报告被删除，原始数据不受影响`)) return
+    setClearing(true)
+    const res = await apiDelete("/summaries")
+    if (res.code === 0) {
+      const d = res.data as { deleted?: number } | null
+      setFeedback(`已清除 ${d?.deleted ?? "全部"} 条`)
+      setPage(1); fetchPage(1, summaryType)
+    } else setFeedback("清除失败：" + res.message)
+    setClearing(false)
+    setTimeout(() => setFeedback(""), 4000)
+  }
+
+  const handleBackfill = async () => {
+    setBackfilling(true); setFeedback("生成中...")
+    const res = await apiPost<{ daily: number; weekly: number; monthly: number; yearly: number }>("/summaries/incremental-backfill")
+    if (res.code === 0 && res.data) {
+      const d = res.data; const parts: string[] = []
+      if (d.daily > 0) parts.push(`${d.daily}日报`)
+      if (d.weekly > 0) parts.push(`${d.weekly}周报`)
+      if (d.monthly > 0) parts.push(`${d.monthly}月报`)
+      if (d.yearly > 0) parts.push(`${d.yearly}年报`)
+      setFeedback(parts.length ? `已生成：${parts.join("、")}` : "没有新报告")
+      fetchPage(page, summaryType)
+    } else setFeedback("生成失败：" + (res.message || "未知错误"))
+    setBackfilling(false); setTimeout(() => setFeedback(""), 5000)
+  }
+
+  const goPage = (p: number) => { if (p >= 1 && p <= totalPages) { setPage(p); fetchPage(p, summaryType) } }
 
   const actions = (
-    <div className="flex flex-wrap items-center gap-2">
-      <AnimatedDropdown
-        options={summaryTypeOptions}
-        value={summaryType}
-        onChange={setSummaryType}
-        theme="green"
-        icon={<Clock className="h-4 w-4" />}
-      />
-      <ParticleButton
-        className="bg-gradient-to-r from-green-500 to-green-600 px-5 py-2 text-white hover:from-green-600 hover:to-green-700"
-        onClick={async () => {
-          setGenerating(true)
-          setFeedback("")
-          try {
-            const res = await apiPost(`/summaries/generate?type=${summaryType}`)
-            setFeedback(res.message || "报告生成成功")
-            const listRes = await apiGet<AnalysisSummary[]>(`/summaries?type=${summaryType}&limit=20`)
-            setSummaries(listRes.data ?? [])
-          } finally {
-            setGenerating(false)
-          }
-        }}
-        disabled={generating}
-      >
-        {generating ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-        生成报告
-      </ParticleButton>
+    <div className="flex items-center gap-2 ml-auto flex-wrap">
+      <AnimatedDropdown options={summaryTypeOptions} value={summaryType} onChange={setSummaryType} theme="green" icon={<Clock className="h-4 w-4" />} />
+      <button disabled={backfilling} onClick={handleBackfill}
+        className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:shadow-md transition disabled:opacity-50">
+        <Zap className={`h-4 w-4 ${backfilling ? "animate-pulse" : ""}`} />{backfilling ? "生成中…" : "一键生成"}
+      </button>
+      <button disabled={clearing} onClick={handleClearAll}
+        className="inline-flex items-center gap-1 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-100 transition disabled:opacity-50" title="清除全部">
+        <Trash className="h-4 w-4" />清除全部
+      </button>
+      <button onClick={() => fetchPage(page, summaryType)}
+        className="inline-flex items-center gap-1 rounded-xl bg-white/80 border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition" title="刷新">
+        <RefreshCw className="h-4 w-4" />
+      </button>
     </div>
   )
 
   return (
     <AppShell title="营养分析报告" titleIcon={<FileText className="w-6 h-6 text-green-600" />} actions={actions} theme="green">
       {feedback && (
-        <div className="mb-4 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">
-          {feedback}
-        </div>
+        <div className="mb-4 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">{feedback}</div>
       )}
 
-      <div className="grid gap-4">
-        {loading && (
-          <Card className="border-0 bg-white/80">
-            <CardContent className="px-6 py-10 text-center text-gray-400">加载中...</CardContent>
-          </Card>
-        )}
-
-        {!loading && summaries.length === 0 && (
-          <Card className="border-0 bg-white/80">
-            <CardContent className="px-6 py-10 text-center text-gray-400">暂无报告</CardContent>
-          </Card>
-        )}
-
-        {!loading &&
-          summaries.map((summary) => (
-            <Card
-              key={summary.id}
-              className="cursor-pointer border-0 bg-white/85 transition-transform hover:-translate-y-0.5 hover:shadow-[0_12px_36px_rgba(102,126,234,0.16)]"
-              onClick={() => setSelectedSummary(summary)}
-            >
-              <CardContent className="px-6 py-5">
-                <div className="flex flex-wrap items-center gap-3 mb-3">
-                  <strong className="text-base text-gray-800">{summary.summary_type}</strong>
-                  <span className="rounded-full bg-[#eef1ff] px-3 py-1 text-xs font-medium text-[#5f63d8]">
-                    {summary.source}
-                  </span>
-                  <span className="text-sm text-gray-500">{formatDate(summary.summary_date)}</span>
-                </div>
-
-                <div className="flex flex-wrap gap-3 text-sm text-gray-600">
-                  {metricEntries(summary.insights).map((m) => (
-                    <span key={m.key} className="rounded-lg bg-[#f8f9ff] px-3 py-2">
-                      <b className="mr-1 text-gray-800">{m.label}:</b>
-                      {renderValue(m.value)}
-                      {m.unit}
-                    </span>
-                  ))}
-                </div>
-
-                {summary.insights.top_foods?.length ? (
-                  <p className="mt-3 text-sm text-gray-500">
-                    常吃食物: {summary.insights.top_foods.slice(0, 5).map((food) => food.name || food.name_en).join(", ")}
-                  </p>
-                ) : null}
-
-                {summary.insights.recommendations?.length ? (
-                  <p className="mt-2 text-sm text-[#6b5db7]">{summary.insights.recommendations[0]}</p>
-                ) : null}
-              </CardContent>
-            </Card>
-          ))}
+      <div className="mb-3 text-xs text-gray-400">
+        共 {total} 条
       </div>
 
-      {selectedSummary && (
-        <ReportDetailModal summary={selectedSummary} onClose={() => setSelectedSummary(null)} />
+      {loading ? (
+        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">加载中...</CardContent></Card>
+      ) : summaries.length === 0 ? (
+        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">暂无报告，点击「一键生成」开始</CardContent></Card>
+      ) : (
+        <>
+          {/* 双列网格 + 依次出现动画 */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <AnimatePresence mode="wait">
+              {summaries.map((s, idx) => {
+                const tg = TYPE_TAGS[s.summary_type] ?? TYPE_TAGS.daily
+                const i = s.insights
+                return (
+                  <motion.div
+                    key={`${s.id}-${animKey}`}
+                    initial={{ x: 60, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ duration: 0.35, delay: idx * 0.06, ease: [0.22, 1, 0.36, 1] }}
+                  >
+                    <Card
+                      className="cursor-pointer border-0 hover:-translate-y-0.5 hover:shadow-lg transition-all relative group"
+                      style={{ backgroundColor: tg.bg }}
+                      onClick={() => setSelected(s)}>
+                      <CardContent className="p-2.5">
+                        {/* 左右分区 */}
+                        <div className="flex gap-3">
+                          {/* 左侧：标签 + 日期 */}
+                          <div className="flex-shrink-0 flex flex-col items-start min-w-0" style={{ minWidth: "38%" }}>
+                            <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold text-white whitespace-nowrap"
+                              style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}>
+                              {tg.emoji} {tg.label}
+                            </span>
+                            <h3 className="text-sm font-bold text-gray-900 mt-1.5 leading-tight">{fmtDate(s.summary_date)}</h3>
+                          </div>
+
+                          {/* 右侧：营养数据 + 常吃食物 */}
+                          <div className="flex-1 min-w-0">
+                            {i && (
+                              <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                                {i.total_energy_kcal != null && (
+                                  <span className="text-xs text-gray-600">🔥 {Math.round(i.total_energy_kcal)} kcal</span>
+                                )}
+                                {i.total_protein_g != null && (
+                                  <span className="text-xs text-gray-600">💪 {rv(i.total_protein_g)}g</span>
+                                )}
+                                {i.total_fat_g != null && (
+                                  <span className="text-xs text-gray-600">🧈 {rv(i.total_fat_g)}g</span>
+                                )}
+                                {i.total_carbohydrate_g != null && (
+                                  <span className="text-xs text-gray-600">🍚 {rv(i.total_carbohydrate_g)}g</span>
+                                )}
+                              </div>
+                            )}
+                            {i?.top_foods?.length ? (
+                              <p className="text-[11px] text-gray-400 mt-1.5 truncate">
+                                常吃：{i.top_foods.slice(0, 4).map((f: { name?: string; name_en?: string }) => f.name || f.name_en).join("、")}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        {/* 删除 — hover 出现 */}
+                        <button type="button" disabled={deletingId === s.id}
+                          onClick={(e) => handleDelete(s.id, e)}
+                          className="absolute top-2 right-2 rounded-full p-1.5 text-gray-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition-all"
+                          title="删除"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
+          </div>
+
+          {/* 分页 */}
+          {totalPages > 1 && (
+            <div className="mt-6 flex items-center justify-center gap-1 flex-wrap">
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => goPage(1)}
+                className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"><ChevronsLeft className="h-4 w-4" /></Button>
+              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => goPage(page - 1)}
+                className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></Button>
+
+              {(() => {
+                const winSize = 5
+                let start = Math.max(1, page - 2)
+                if (start + winSize - 1 > totalPages) start = Math.max(1, totalPages - winSize + 1)
+                const end = Math.min(start + winSize - 1, totalPages)
+                return Array.from({ length: end - start + 1 }, (_, i) => start + i).map(p => (
+                  <button key={p} onClick={() => goPage(p)}
+                    className={`h-8 w-8 rounded-full text-sm font-medium transition ${p === page ? "bg-gradient-to-r from-emerald-500 to-green-600 text-white" : "text-gray-500 hover:bg-gray-100"}`}>{p}</button>
+                ))
+              })()}
+
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => goPage(page + 1)}
+                className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => goPage(totalPages)}
+                className="border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"><ChevronsRight className="h-4 w-4" /></Button>
+            </div>
+          )}
+          <p className="mt-2 text-center text-xs text-gray-400">第 {page}/{totalPages} 页 · 共 {total} 条</p>
+        </>
       )}
+
+      {selected && <ReportDetailModal summary={selected} onClose={() => setSelected(null)} />}
     </AppShell>
   )
 }
