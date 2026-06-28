@@ -11,6 +11,7 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 RESPONSES_URL = settings.responses_url
+CHAT_COMPLETIONS_URL = settings.chat_completions_url
 EMBEDDINGS_URL = settings.embeddings_url
 MULTIMODAL_URL = settings.multimodal_url
 HEADERS = {

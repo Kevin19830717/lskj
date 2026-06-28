@@ -40,6 +40,7 @@ type WeighInRequest struct {
 	CookedIronMg      float64   `json:"cooked_iron_mg"`                               // 铁(mg)
 	CookedPotassiumMg float64   `json:"cooked_potassium_mg"`                          // 钾(mg)
 	CookingTimeMinutes int      `json:"cooking_time_minutes,omitempty"`               // 烹饪时间(分钟)
+	CreatedAt         string    `json:"created_at,omitempty"`                            // 用餐时间(RFC3339), 仅更新时用
 }
 
 // WeighRecordResponse 称重记录响应

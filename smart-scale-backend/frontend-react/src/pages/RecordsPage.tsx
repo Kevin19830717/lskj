@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react"
 import type { DateRange } from "react-aria-components"
 import AppShell from "@/components/app-shell"
-import { apiGet, type PaginatedRecords, type WeighRecord } from "@/lib/api"
+import { apiGet, apiPut, apiDelete, type PaginatedRecords, type WeighRecord } from "@/lib/api"
 import { Card, CardContent } from "@/components/ui/card"
 import { motion, AnimatePresence } from "framer-motion"
 import { JollyDateRangePicker } from "@/components/ui/date-range-picker"
-import { ClipboardList, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils } from "lucide-react"
+import { ClipboardList, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils, Pencil, Trash2 } from "lucide-react"
 
 // ============================================================
 // 工具函数
@@ -27,6 +27,15 @@ function formatDateTime(dateStr?: string) {
 function formatMetric(value?: number, digits = 1) {
   if (value == null) return "-"
   return digits === 0 ? String(Math.round(value)) : value.toFixed(digits)
+}
+
+function formatDateTimeForInput(dateStr?: string) {
+  if (!dateStr) return ""
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return ""
+  // 转成 datetime-local 格式: yyyy-MM-ddTHH:mm
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 // ============================================================
@@ -186,29 +195,36 @@ export default function RecordsPage() {
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [editingRecord, setEditingRecord] = useState<WeighRecord | null>(null)
+  const [editItems, setEditItems] = useState<{ name: string; weight: string }[]>([])
+  const [editCookingMethod, setEditCookingMethod] = useState("")
+  const [editDateTime, setEditDateTime] = useState("")
+  const [editEnergy, setEditEnergy] = useState("")
+  const [editProtein, setEditProtein] = useState("")
+  const [editFat, setEditFat] = useState("")
+  const [editCarb, setEditCarb] = useState("")
+  const [editWeight, setEditWeight] = useState("")
+  const [savingRecordId, setSavingRecordId] = useState<number | null>(null)
+  const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null)
 
   const startDate = dateRange?.start ? dateRange.start.toString() : ""
   const endDate = dateRange?.end ? dateRange.end.toString() : ""
 
   useEffect(() => {
     let cancelled = false
-    async function fetchRecords() {
-      setLoading(true)
-      const params = new URLSearchParams({
-        page: String(currentPage),
-        page_size: "15",
-      })
-      if (startDate) params.set("start_date", startDate)
-      if (endDate) params.set("end_date", endDate)
-
-      try {
-        const res = await apiGet<PaginatedRecords>(`/records?${params.toString()}`)
-        if (!cancelled) setRecords(res.data ?? null)
-      } finally {
-        if (!cancelled) setLoading(false)
+    setLoading(true)
+    const params = new URLSearchParams({
+      page: String(currentPage),
+      page_size: "15",
+    })
+    if (startDate) params.set("start_date", startDate)
+    if (endDate) params.set("end_date", endDate)
+    apiGet<PaginatedRecords>(`/records?${params.toString()}`).then(res => {
+      if (!cancelled) {
+        setRecords(res.data ?? null)
+        setLoading(false)
       }
-    }
-    fetchRecords()
+    })
     return () => { cancelled = true }
   }, [currentPage, startDate, endDate])
 
@@ -232,6 +248,63 @@ export default function RecordsPage() {
         || (r.cooking_method_label || r.cooking_method || "").toLowerCase().includes(q)
     })
   }, [items, searchQuery])
+
+  const refreshRecords = () => {
+    const params = new URLSearchParams({ page: String(currentPage), page_size: "15" })
+    if (startDate) params.set("start_date", startDate)
+    if (endDate) params.set("end_date", endDate)
+    setLoading(true)
+    apiGet<PaginatedRecords>(`/records?${params.toString()}`).then(res => {
+      setRecords(res.data ?? null)
+      setLoading(false)
+    })
+  }
+
+  const handleEditRecord = (r: WeighRecord) => {
+    const names = r.ingredient_names?.length ? r.ingredient_names : r.ingredients
+    const weights = r.raw_weights_g || []
+    setEditingRecord(r)
+    setEditItems(names.map((n, i) => ({ name: n, weight: weights[i] != null ? String(Math.round(weights[i])) : "" })))
+    setEditCookingMethod(r.cooking_method || "")
+    setEditDateTime(formatDateTimeForInput(r.created_at))
+    setEditEnergy(r.cooked_energy_kcal != null ? String(Math.round(r.cooked_energy_kcal)) : "")
+    setEditProtein(r.cooked_protein_g != null ? String(r.cooked_protein_g) : "")
+    setEditFat(r.cooked_fat_g != null ? String(r.cooked_fat_g) : "")
+    setEditCarb(r.cooked_carbohydrate_g != null ? String(r.cooked_carbohydrate_g) : "")
+    setEditWeight(r.cooked_weight_g != null ? String(Math.round(r.cooked_weight_g)) : "")
+  }
+
+  const handleSaveRecord = async () => {
+    if (!editingRecord) return
+    setSavingRecordId(editingRecord.id)
+    const ingredients = editItems.map(it => it.name).filter(Boolean)
+    const rawWeights = editItems.map(it => parseFloat(it.weight) || 0)
+    // 同时发送 created_at 让后端更新
+    const res = await apiPut(`/records/${editingRecord.id}`, {
+      ingredients,
+      raw_weights_g: rawWeights,
+      cooking_method: editCookingMethod,
+      cooked_weight_g: parseFloat(editWeight) || 0,
+      cooked_energy_kcal: parseFloat(editEnergy) || 0,
+      cooked_protein_g: parseFloat(editProtein) || 0,
+      cooked_fat_g: parseFloat(editFat) || 0,
+      cooked_carbohydrate_g: parseFloat(editCarb) || 0,
+      created_at: editDateTime || undefined,
+    })
+    if (res.code === 0) {
+      setEditingRecord(null)
+      refreshRecords()
+    }
+    setSavingRecordId(null)
+  }
+
+  const handleDeleteRecord = async (id: number) => {
+    if (!confirm("确定删除这条记录？")) return
+    setDeletingRecordId(id)
+    const res = await apiDelete(`/records/${id}`)
+    if (res.code === 0) refreshRecords()
+    setDeletingRecordId(null)
+  }
 
   return (
     <AppShell title="称重历史记录" titleIcon={<ClipboardList className="w-6 h-6 text-[#667eea]" />}>
@@ -361,7 +434,6 @@ export default function RecordsPage() {
             )}
             {!loading && filteredItems.map((record, recordIdx) => {
               const isExpanded = expandedId === record.id
-              const cc = cookingColor(record.cooking_method)
               const names = record.ingredient_names?.length ? record.ingredient_names : record.ingredients
               const methodLabel = cookingLabel(record)
               return (
@@ -374,7 +446,7 @@ export default function RecordsPage() {
                 >
                   {/* 概要行 */}
                   <div
-                    className="flex items-center gap-3 px-6 py-3 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
+                    className="group flex items-center gap-3 px-6 py-3 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
                     onClick={() => setExpandedId(isExpanded ? null : record.id)}
                   >
                     {/* 展开箭头 */}
@@ -417,6 +489,22 @@ export default function RecordsPage() {
                         {formatMetric(record.cooked_carbohydrate_g)}g
                       </span>
                     </div>
+
+                    {/* 编辑 & 删除按钮 */}
+                    <div className="flex items-center gap-1 flex-shrink-0 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button type="button"
+                        onClick={(e) => { e.stopPropagation(); handleEditRecord(record) }}
+                        className="rounded-full p-1.5 text-gray-300 hover:text-[#667eea] hover:bg-[#667eea]/10 transition-all"
+                        title="编辑">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button type="button" disabled={deletingRecordId === record.id}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id) }}
+                        className="rounded-full p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all"
+                        title="删除">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* 详情 — 紧跟该行展开 */}
@@ -440,10 +528,107 @@ export default function RecordsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* 编辑称重记录弹窗 */}
+      {editingRecord && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4" onClick={() => setEditingRecord(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">编辑称重记录</h3>
+            <div className="space-y-3">
+              {/* 用餐时间 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">用餐时间</label>
+                <input type="datetime-local" value={editDateTime}
+                  onChange={e => setEditDateTime(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20" />
+              </div>
+
+              {/* 食材逐行编辑 */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-gray-500">食材明细</label>
+                  <button type="button" onClick={() => setEditItems([...editItems, { name: "", weight: "" }])}
+                    className="text-xs text-[#667eea] hover:underline">+ 添加食材</button>
+                </div>
+                <div className="space-y-2">
+                  {editItems.map((item, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input value={item.name} placeholder="食材名"
+                        onChange={e => {
+                          const next = [...editItems]
+                          next[i] = { ...next[i], name: e.target.value }
+                          setEditItems(next)
+                        }}
+                        className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                      <input type="number" value={item.weight} placeholder="克数"
+                        onChange={e => {
+                          const next = [...editItems]
+                          next[i] = { ...next[i], weight: e.target.value }
+                          setEditItems(next)
+                        }}
+                        className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                      <span className="text-xs text-gray-400">g</span>
+                      {editItems.length > 1 && (
+                        <button type="button" onClick={() => setEditItems(editItems.filter((_, j) => j !== i))}
+                          className="text-gray-300 hover:text-red-400 text-lg leading-none">&times;</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 烹饪方式 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">烹饪方式</label>
+                <select value={editCookingMethod} onChange={e => setEditCookingMethod(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]">
+                  <option value="">未选择</option>
+                  <option value="boil">煮</option><option value="steam">蒸</option>
+                  <option value="stir_fry">炒</option><option value="braise">炖</option>
+                  <option value="roast">烤</option><option value="pan_fry">煎</option>
+                  <option value="deep_fry">炸</option>
+                </select>
+              </div>
+
+              {/* 营养数据 */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">熟重 (g)</label>
+                  <input type="number" value={editWeight} onChange={e => setEditWeight(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">热量 (kcal)</label>
+                  <input type="number" value={editEnergy} onChange={e => setEditEnergy(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">蛋白质 (g)</label>
+                  <input type="number" value={editProtein} onChange={e => setEditProtein(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">脂肪 (g)</label>
+                  <input type="number" value={editFat} onChange={e => setEditFat(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">碳水 (g)</label>
+                  <input type="number" value={editCarb} onChange={e => setEditCarb(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-5">
+              <button onClick={() => setEditingRecord(null)} className="px-4 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100 transition">取消</button>
+              <button onClick={handleSaveRecord} disabled={savingRecordId === editingRecord.id}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:shadow-md transition disabled:opacity-50">
+                {savingRecordId === editingRecord.id ? "保存中..." : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   )
-}
-
-function cn(...inputs: (string | undefined | false)[]) {
-  return inputs.filter(Boolean).join(" ")
 }

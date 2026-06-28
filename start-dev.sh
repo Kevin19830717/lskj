@@ -60,7 +60,7 @@ export UPLOAD_MAX_SIZE_MB=10
 
 export DATABASE_URL=postgresql://postgres:321738392@localhost:5432/smart_scale
 export RAG_SERVER_PORT=8001
-export TEXT_MODEL=qwen3.6-flash
+export TEXT_MODEL=qwen-plus
 export VL_MODEL=qwen-vl-flash
 export EMBEDDING_MODEL=text-embedding-v2
 export SIMILARITY_THRESHOLD=0.3
@@ -126,17 +126,25 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         client_max_body_size 10M;
-        proxy_read_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
     }
     location /rag/ {
         rewrite ^/rag/(.*) /$1 break;
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 60s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+    # index.html 不缓存，确保每次拿到最新 JS hash（避免浏览器用旧 JS）
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        expires 0;
     }
     location / {
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
     location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
         expires 30d;

@@ -1,13 +1,89 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import AppShell from "@/components/app-shell"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/api"
-import { Send, Sparkles, User, RotateCcw } from "lucide-react"
+import { Send, Sparkles, User, RotateCcw, Brain } from "lucide-react"
 
 interface ChatMsg {
   role: "user" | "assistant"
   content: string
+  thinking?: string
+  thinkingDone?: boolean
+}
+
+// 极简风格可折叠思考块（深色主题，自动滚动跟随输出）
+function ThinkingBlock({ thinking, isThinking, done, expert }: { thinking: string; isThinking: boolean; done: boolean; expert: boolean }) {
+  const [expanded, setExpanded] = useState(true)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // 思考完成时自动折叠
+  useEffect(() => {
+    if (done) setExpanded(false)
+  }, [done])
+  // 自动滚动到底部：思考文字更新时跟随流式输出
+  useEffect(() => {
+    if (expanded && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [thinking, expanded])
+
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className={cn(
+          "flex items-center gap-2 text-xs transition-colors mb-1.5",
+          expert
+            ? "text-white/70 hover:text-white"
+            : "text-gray-500 hover:text-gray-900"
+        )}
+      >
+        {/* 单点呼吸光晕 */}
+        <span className="relative flex h-2 w-2">
+          {isThinking && (
+            <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-30", expert ? "bg-white" : "bg-gray-900")} />
+          )}
+          <span
+            className={cn(
+              "relative inline-flex rounded-full h-2 w-2 transition-colors duration-300",
+              isThinking
+                ? (expert ? "bg-white" : "bg-gray-900")
+                : (expert ? "bg-white/40" : "bg-gray-400")
+            )}
+          />
+        </span>
+        <span className={cn(isThinking && (expert ? "text-white font-medium" : "text-gray-900 font-medium"))}>
+          {isThinking ? "正在深度思考" : `已深度思考 · 点击${expanded ? "收起" : "展开"}`}
+        </span>
+        {isThinking && (
+          <span className="inline-flex items-end gap-[2px] h-3 ml-0.5">
+            <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", expert ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "0ms", height: "40%" }} />
+            <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", expert ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "150ms", height: "70%" }} />
+            <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", expert ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "300ms", height: "50%" }} />
+            <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", expert ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "450ms", height: "85%" }} />
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div
+          ref={scrollRef}
+          className={cn(
+            "mt-1 pl-3 border-l-2 text-xs leading-relaxed whitespace-pre-wrap max-h-44 overflow-y-auto",
+            expert
+              ? "border-white/20 text-white/80"
+              : "border-gray-200 text-gray-500"
+          )}
+        >
+          {thinking}
+          {isThinking && (
+            <span className={cn("inline-block w-[2px] h-3 ml-0.5 animate-pulse align-text-bottom", expert ? "bg-white" : "bg-gray-900")} />
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api/v1"
@@ -31,6 +107,15 @@ export default function AIChatPage() {
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [mode, setMode] = useState<"fast" | "expert">(() => {
+    return (localStorage.getItem("ai_chat_mode") as "fast" | "expert") || "fast"
+  })
+  const [thinking, setThinking] = useState(false)
+
+  // 模式变化时持久化
+  useEffect(() => {
+    localStorage.setItem("ai_chat_mode", mode)
+  }, [mode])
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -43,7 +128,29 @@ export default function AIChatPage() {
       try {
         const res = await apiGet<{ history: ChatMsg[] }>("/ai/chat/history")
         if (!cancelled && res.code === 0 && res.data?.history?.length) {
-          setMessages(res.data.history)
+          const history = res.data.history
+          // 修复"中途退出留下孤立用户问题"：若最后一条是用户消息且无 AI 回复，自动重发
+          const last = history[history.length - 1]
+          if (last && last.role === "user") {
+            const question = last.content
+            // 移除这条孤立的用户消息（前端 + 后端），由 send() 重新加入
+            // 否则每次进页面都会再存一条 user 消息，导致重复堆积
+            const trimmed = history.slice(0, -1)
+            setMessages(trimmed)
+            setHistoryLoaded(true)
+            // 调用后端删除最后这条孤立的 user 消息，避免数据库里堆积重复
+            try {
+              await apiPost("/ai/chat/delete-last-user")
+            } catch {
+              // 删除失败不阻塞重发
+            }
+            // 等待下一帧再触发，避免状态竞争
+            setTimeout(() => {
+              if (!cancelled) send(question)
+            }, 50)
+            return
+          }
+          setMessages(history)
         }
       } catch {
         // 忽略错误，使用欢迎消息
@@ -57,22 +164,20 @@ export default function AIChatPage() {
     return () => { cancelled = true }
   }, [])
 
-  // 滚动到底部：首次加载用 instant，后续用 smooth
-  useEffect(() => {
+  // 滚动到底部：用 useLayoutEffect 在浏览器绘制前同步设置，避免"从顶滑到底"
+  useLayoutEffect(() => {
     if (!historyLoaded || !scrollRef.current) return
     const el = scrollRef.current
     if (isFirstRender.current) {
-      // 首次加载：AppShell 页面切换动画约 450ms，期间 scrollHeight 不稳定，
-      // 先立即跳一次，动画结束后再校正一次，确保无可见的"从顶滑到底"
       isFirstRender.current = false
       el.scrollTop = el.scrollHeight
+      // AppShell 页面切换动画约 450ms，动画结束后再校正一次确保位置准确
       const timer = setTimeout(() => {
-        el.scrollTop = el.scrollHeight
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
       }, 500)
       return () => clearTimeout(timer)
     } else {
-      // 后续新消息平滑滚动
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+      el.scrollTop = el.scrollHeight
     }
   }, [messages, loading, historyLoaded])
 
@@ -82,9 +187,11 @@ export default function AIChatPage() {
 
     const userMsg: ChatMsg = { role: "user", content }
     const history = messages.map((m) => ({ role: m.role, content: m.content }))
-    setMessages((prev) => [...prev, userMsg, { role: "assistant", content: "" }])
+    setMessages((prev) => [...prev, userMsg, { role: "assistant", content: "", thinking: "" }])
     setInput("")
     setLoading(true)
+    // 专家模式立即显示"正在深度思考"占位符，避免十秒空窗期
+    setThinking(mode === "expert")
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -97,7 +204,7 @@ export default function AIChatPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ message: content, history }),
+        body: JSON.stringify({ message: content, history, mode }),
         signal: controller.signal,
       })
 
@@ -111,6 +218,7 @@ export default function AIChatPage() {
       const decoder = new TextDecoder()
       let buffer = ""
       let fullText = ""
+      let fullThinking = ""
 
       while (true) {
         const { done, value } = await reader.read()
@@ -127,22 +235,46 @@ export default function AIChatPage() {
 
           try {
             const data = JSON.parse(dataStr)
-            if (data.delta) {
-              fullText += data.delta
+            if (data.thinking_delta) {
+              // 专家模式：真实深度思考文字
+              if (!thinking) setThinking(true)
+              fullThinking += data.thinking_delta
               setMessages((prev) => {
                 const next = [...prev]
-                next[next.length - 1] = { role: "assistant", content: fullText }
+                next[next.length - 1] = { role: "assistant", content: "", thinking: fullThinking, thinkingDone: false }
+                return next
+              })
+            }
+            if (data.thinking_end) {
+              // 思考结束，标记完成，触发折叠动画
+              setMessages((prev) => {
+                const next = [...prev]
+                const last = next[next.length - 1]
+                if (last.role === "assistant") {
+                  next[next.length - 1] = { ...last, thinkingDone: true }
+                }
+                return next
+              })
+            }
+            if (data.delta) {
+              fullText += data.delta
+              if (thinking) setThinking(false)
+              setMessages((prev) => {
+                const next = [...prev]
+                next[next.length - 1] = { role: "assistant", content: fullText, thinking: fullThinking || undefined }
                 return next
               })
             } else if (data.error) {
               fullText = fullText || `抱歉，出了一点小问题：${data.error}`
+              setThinking(false)
               setMessages((prev) => {
                 const next = [...prev]
                 next[next.length - 1] = { role: "assistant", content: fullText }
                 return next
               })
             } else if (data.done) {
-              if (!fullText) {
+              setThinking(false)
+              if (!fullText && !fullThinking) {
                 setMessages((prev) => {
                   const next = [...prev]
                   next[next.length - 1] = { role: "assistant", content: "（回复为空，请重试）" }
@@ -169,6 +301,7 @@ export default function AIChatPage() {
       })
     } finally {
       setLoading(false)
+      setThinking(false)
       abortRef.current = null
       inputRef.current?.focus()
     }
@@ -187,6 +320,7 @@ export default function AIChatPage() {
     }
     setMessages([WELCOME_MSG])
     setLoading(false)
+    setThinking(false)
     // 调用后端接口清除服务器端的聊天记录和对话状态
     apiPost("/ai/chat/reset").catch(() => {})
   }
@@ -194,12 +328,74 @@ export default function AIChatPage() {
   return (
     <AppShell title="AI 健康助手" titleIcon={<Sparkles className="w-6 h-6 text-[#667eea]" />}>
       <div className="flex flex-col h-[calc(100vh-180px)]">
+        {/* 模式切换 */}
+        <div className="flex items-center justify-center gap-2 mb-3">
+          {/* 专家模式 toggle 开关 */}
+          <motion.button
+            onClick={() => setMode(mode === "expert" ? "fast" : "expert")}
+            className={cn(
+              "group relative flex items-center gap-2.5 pl-3 pr-4 py-2 rounded-full text-xs font-medium transition-all duration-500 ease-out shadow-sm border",
+              mode === "expert"
+                ? "bg-gradient-to-r from-[#667eea] to-[#764ba2] border-[#667eea] text-white shadow-[0_2px_12px_rgba(102,126,234,0.35)]"
+                : "bg-white/70 backdrop-blur-sm border-[rgba(200,195,235,0.4)] text-gray-500 hover:text-gray-900 hover:border-gray-700"
+            )}
+            whileTap={{ scale: 0.93 }}
+            whileHover={{ scale: 1.03 }}
+            title={mode === "expert" ? "专家模式已开启：深度思考，详尽分析。点击切回快速模式" : "当前快速模式：简洁直接。点击开启专家模式深度思考"}
+          >
+            {/* 专家模式激活时的呼吸光晕 */}
+            {mode === "expert" && (
+              <motion.span
+                className="absolute inset-0 rounded-full"
+                initial={{ opacity: 0 }}
+                animate={{
+                  opacity: [0.2, 0.05, 0.2],
+                  boxShadow: [
+                    "0 0 0px rgba(102,126,234,0)",
+                    "0 0 20px rgba(102,126,234,0.4)",
+                    "0 0 0px rgba(102,126,234,0)",
+                  ],
+                }}
+                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+              />
+            )}
+            {mode !== "expert" && (
+              <motion.span
+                className="absolute inset-0 rounded-full"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 0 }}
+              />
+            )}
+            {/* Toggle 轨道 */}
+            <span
+              className={cn(
+                "relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-300",
+                mode === "expert" ? "bg-gradient-to-r from-[#667eea] to-[#764ba2]" : "bg-gray-300"
+              )}
+            >
+              {/* Toggle 滑块 */}
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-300 flex items-center justify-center",
+                  mode === "expert" ? "translate-x-4" : "translate-x-0.5"
+                )}
+              >
+                <Brain className={cn("w-2.5 h-2.5 transition-colors duration-300", mode === "expert" ? "text-[#667eea]" : "text-gray-400")} />
+              </span>
+            </span>
+            <span className="flex items-center gap-1">
+              <Brain className="w-3.5 h-3.5" />
+              <span>专家模式</span>
+            </span>
+          </motion.button>
+        </div>
         {/* 消息列表区 */}
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto pr-2 space-y-5"
-        >
-          {messages.map((msg, idx) => (
+        <div className="relative flex-1 min-h-0">
+          <div
+            ref={scrollRef}
+            className="absolute inset-0 overflow-y-auto pr-2 space-y-5"
+          >
+            {messages.map((msg, idx) => (
             <div
               key={idx}
               className={cn("flex gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
@@ -211,29 +407,72 @@ export default function AIChatPage() {
                 </div>
               )}
 
-              {/* 气泡 */}
+              {/* 气泡：专家模式助手气泡用深色主题（黑底白字），切换时平滑过渡 */}
               <div
                 className={cn(
-                  "relative max-w-[72%] px-5 py-3.5 rounded-2xl shadow-md",
+                  "relative max-w-[72%] px-5 py-3.5 rounded-2xl shadow-md transition-all duration-500 ease-out",
                   msg.role === "user"
-                    ? "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-tr-md shadow-[0_4px_16px_rgba(102,126,234,0.25)]"
+                    ? mode === "expert"
+                      ? "bg-white/95 text-gray-700 rounded-tr-md border border-[rgba(200,195,235,0.4)] shadow-[0_4px_16px_rgba(102,126,234,0.08)]"
+                      : "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-tr-md shadow-[0_4px_16px_rgba(102,126,234,0.25)]"
+                    : mode === "expert"
+                    ? "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white rounded-tl-md shadow-[0_4px_16px_rgba(102,126,234,0.25)]"
                     : "bg-white/95 text-gray-700 rounded-tl-md border border-[rgba(200,195,235,0.4)] shadow-[0_4px_16px_rgba(102,126,234,0.08)]"
                 )}
               >
                 {/* 气泡装饰光晕 */}
                 {msg.role === "assistant" && (
-                  <div className="absolute -top-2 -left-2 w-16 h-16 bg-[radial-gradient(circle,rgba(250,204,21,0.15)_0%,transparent_70%)] rounded-full pointer-events-none" />
+                  <div
+                    className={cn(
+                      "absolute -top-2 -left-2 w-16 h-16 rounded-full pointer-events-none",
+                      mode === "expert"
+                        ? "bg-[radial-gradient(circle,rgba(255,255,255,0.15)_0%,transparent_70%)]"
+                        : "bg-[radial-gradient(circle,rgba(102,126,234,0.12)_0%,transparent_70%)]"
+                    )}
+                  />
                 )}
-                <div className="relative whitespace-pre-wrap text-[14px] leading-relaxed break-words">
-                  {msg.content}
-                  {/* 流式输出光标 */}
-                  {loading && idx === messages.length - 1 && msg.role === "assistant" && (
-                    <span className="inline-block w-1.5 h-4 ml-0.5 bg-[#667eea] animate-pulse align-text-bottom" />
+                <div className="relative text-[14px] leading-relaxed break-words">
+                  {/* DeepSeek 风格可折叠思考区 */}
+                  {msg.role === "assistant" && msg.thinking && (
+                    <ThinkingBlock
+                      thinking={msg.thinking}
+                      isThinking={thinking && idx === messages.length - 1 && !msg.content}
+                      done={!!msg.thinkingDone || !!msg.content}
+                      expert={mode === "expert"}
+                    />
+                  )}
+                  {/* 思考阶段且尚无思考文字时显示极简占位（专家模式深色） */}
+                  {thinking && idx === messages.length - 1 && msg.role === "assistant" && !msg.content && !msg.thinking && (
+                    <div className={cn("flex items-center gap-2 text-xs mb-3 font-medium", mode === "expert" ? "text-white" : "text-gray-900")}>
+                      <span className="relative flex h-2 w-2">
+                        <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-30", mode === "expert" ? "bg-white" : "bg-gray-900")} />
+                        <span className={cn("relative inline-flex rounded-full h-2 w-2", mode === "expert" ? "bg-white" : "bg-gray-900")} />
+                      </span>
+                      <span>正在深度思考</span>
+                      <span className="inline-flex items-end gap-[2px] h-3 ml-0.5">
+                        <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", mode === "expert" ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "0ms", height: "40%" }} />
+                        <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", mode === "expert" ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "150ms", height: "70%" }} />
+                        <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", mode === "expert" ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "300ms", height: "50%" }} />
+                        <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", mode === "expert" ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "450ms", height: "85%" }} />
+                      </span>
+                    </div>
+                  )}
+                  {msg.role === "assistant" ? (
+                    <div className={cn(mode === "expert" ? "ds-markdown-dark" : "ds-markdown", "transition-colors duration-500")}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="whitespace-pre-wrap transition-colors duration-500">{msg.content}</div>
+                  )}
+                  {/* 流式输出光标：专家模式白色 */}
+                  {loading && idx === messages.length - 1 && msg.role === "assistant" && msg.content && !thinking && (
+                    <span className={cn("inline-block w-[2px] h-4 ml-0.5 animate-pulse align-text-bottom", mode === "expert" ? "bg-white" : "bg-[#667eea]")} />
                   )}
                 </div>
               </div>
             </div>
           ))}
+          </div>
         </div>
 
         {/* 快捷问题 */}

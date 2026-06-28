@@ -85,10 +85,19 @@ func (h *SummaryHandler) GetSummaries(c *gin.Context) {
 }
 
 // DeleteAllSummaries 清除当前用户全部报告（测试用）
+// DELETE /api/v1/summaries?exclude_daily=true 时仅清除周/月/年报
 // DELETE /api/v1/summaries
 func (h *SummaryHandler) DeleteAllSummaries(c *gin.Context) {
 	userID := c.GetInt64("user_id")
-	count, err := h.summarySvc.DeleteAllSummaries(c.Request.Context(), int(userID))
+	excludeDaily := c.Query("exclude_daily") == "true"
+
+	var count int64
+	var err error
+	if excludeDaily {
+		count, err = h.summarySvc.DeleteAllExceptDaily(c.Request.Context(), int(userID))
+	} else {
+		count, err = h.summarySvc.DeleteAllSummaries(c.Request.Context(), int(userID))
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed: "+err.Error()))
 		return
@@ -154,4 +163,41 @@ func (h *SummaryHandler) IncrementalBackfill(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.Success(result))
+}
+
+// GenerateNextMissing 生成下一条缺失的摘要（从最远到最近，仅生成当前类型）
+// POST /api/v1/summaries/generate-next?type=weekly|daily|monthly|yearly
+func (h *SummaryHandler) GenerateNextMissing(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+
+	summaryType := c.DefaultQuery("type", "weekly")
+	validTypes := map[string]bool{"daily": true, "weekly": true, "monthly": true, "yearly": true}
+	if !validTypes[summaryType] {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid type. Must be one of: daily, weekly, monthly, yearly"))
+		return
+	}
+
+	// 智能生成：先生成缺失数据报告，全部有后从近到远生成AI总结
+	summary, action, err := h.summarySvc.GenerateNextMissingSummaryWithAI(c.Request.Context(), int(userID), summaryType)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to generate summary: "+err.Error()))
+		return
+	}
+	if summary == nil {
+		typeLabel := map[string]string{
+			"daily": "日报", "weekly": "周报", "monthly": "月报", "yearly": "年报",
+		}[summaryType]
+		if action == "complete" {
+			c.JSON(http.StatusOK, model.SuccessWithMessage("所有"+typeLabel+"已生成完毕（含AI总结）", nil))
+		} else {
+			c.JSON(http.StatusOK, model.SuccessWithMessage("没有缺失的"+typeLabel, nil))
+		}
+		return
+	}
+
+	msg := map[string]string{
+		"data": "已生成数据报告（尚无AI总结，再次点击生成按钮可生成AI总结）",
+		"ai":   "已生成AI总结页",
+	}[action]
+	c.JSON(http.StatusOK, model.SuccessWithMessage(msg, summary))
 }

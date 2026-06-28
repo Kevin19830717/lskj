@@ -50,11 +50,11 @@ export default function ProfilePage() {
         setNickname(nextProfile.nickname || sessionUser.nickname || "")
         setPhone(nextProfile.phone || sessionUser.phone || "")
         // 性别/健康目标：英文 key 转中文显示
-        setGender(genderEnToCn[nextProfile.gender] || nextProfile.gender || "")
+        setGender(nextProfile.gender ? (genderEnToCn[nextProfile.gender] || nextProfile.gender) : "")
         setAge(nextProfile.age != null ? String(nextProfile.age) : "")
         setHeightCm(nextProfile.height_cm != null ? String(nextProfile.height_cm) : "")
         setWeightKg(nextProfile.weight_kg != null ? String(nextProfile.weight_kg) : "")
-        setHealthGoal(goalLabels[nextProfile.health_goal] || nextProfile.health_goal || "")
+        setHealthGoal(nextProfile.health_goal ? (goalLabels[nextProfile.health_goal] || nextProfile.health_goal) : "")
         setAllergies(nextProfile.allergies?.join(", ") || "")
       }
     }

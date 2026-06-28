@@ -246,6 +246,7 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
 // NutrientDistribution — 营养素分布环形图
 // ============================================================
 function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
+  const [hovered, setHovered] = useState<number | null>(null)
   const dist = stats?.nutrient_distribution
   const items = [
     { label: "蛋白质", pct: dist?.protein_pct ?? 0, color: "#E91E63", icon: Beef },
@@ -257,6 +258,7 @@ function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
   const radius = 60
   const circumference = 2 * Math.PI * radius
   let offset = 0
+  const active = hovered !== null ? items[hovered] : null
 
   return (
     <Card className={cn("w-full border-0 shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white/92 backdrop-blur-[12px]")}>
@@ -267,33 +269,75 @@ function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
       </CardHeader>
       <CardContent>
         <div className="flex items-center gap-6">
-          <div className="relative flex-shrink-0">
+          <motion.div
+            className="relative flex-shrink-0 cursor-pointer"
+            whileHover={{ scale: 1.05 }}
+            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          >
             <svg width="160" height="160" viewBox="0 0 160 160" className="-rotate-90">
               {items.map((item, i) => {
                 const dash = (item.pct / total) * circumference
+                const isHovered = hovered === i
+                const dimmed = hovered !== null && !isHovered
                 const circle = (
-                  <circle key={i} cx="80" cy="80" r={radius} fill="none"
-                    stroke={item.color} strokeWidth="20"
+                  <motion.circle key={i} cx="80" cy="80" r={radius} fill="none"
+                    stroke={item.color} strokeWidth={isHovered ? 26 : 20}
                     strokeDasharray={`${dash} ${circumference - dash}`}
-                    strokeDashoffset={-offset} strokeLinecap="round" />
+                    strokeDashoffset={-offset} strokeLinecap="round"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{
+                      opacity: dimmed ? 0.3 : 1,
+                      scale: isHovered ? 1.04 : 1,
+                    }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
+                    style={{ transformOrigin: "80px 80px" }}
+                    onMouseEnter={() => setHovered(i)}
+                    onMouseLeave={() => setHovered(null)}
+                  />
                 )
                 offset += dash
                 return circle
               })}
             </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-2xl font-bold text-gray-800">{stats?.total_meals ?? 0}</span>
-              <span className="text-xs text-gray-400">总餐次</span>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <AnimatedNumber
+                value={stats?.total_meals ?? 0}
+                duration={1.2}
+                className="text-2xl font-bold text-gray-800"
+              />
+              <span className="text-xs text-gray-400">{active ? active.label : "总餐次"}</span>
+              {active && (
+                <motion.span
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-[11px] font-semibold mt-0.5"
+                  style={{ color: active.color }}
+                >
+                  {active.pct.toFixed(0)}%
+                </motion.span>
+              )}
             </div>
-          </div>
+          </motion.div>
           <div className="flex-1 space-y-3">
-            {items.map((item) => {
+            {items.map((item, i) => {
               const Icon = item.icon
+              const isHovered = hovered === i
               return (
-                <div key={item.label} className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${item.color}18` }}>
+                <div
+                  key={item.label}
+                  className="flex items-center gap-3 cursor-pointer transition-opacity"
+                  style={{ opacity: hovered !== null && !isHovered ? 0.4 : 1 }}
+                  onMouseEnter={() => setHovered(i)}
+                  onMouseLeave={() => setHovered(null)}
+                >
+                  <motion.div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center"
+                    style={{ background: `${item.color}18` }}
+                    animate={{ scale: isHovered ? 1.15 : 1 }}
+                    transition={{ duration: 0.2 }}
+                  >
                     <Icon className="w-4 h-4" style={{ color: item.color }} />
-                  </div>
+                  </motion.div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-600">{item.label}</span>

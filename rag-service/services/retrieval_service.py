@@ -37,12 +37,17 @@ async def store_embedding(
         新插入记录的 ID
     """
     async with get_connection() as conn:
+        # asyncpg-pgvector 适配器：把 list 转为字符串形式以便 ::vector 强制转换
+        embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+        # asyncpg 把 dict 传给 jsonb 列时需要 JSON 字符串
+        import json as _json
+        metadata_str = _json.dumps(metadata or {}, ensure_ascii=False, default=str)
         record_id = await conn.fetchval("""
             INSERT INTO user_health_embeddings 
-                (user_id, embedding, source_text, source_type, source_date, metadata, updated_at)
-            VALUES ($1, $2::vector, $3, $4, $5, $6::jsonb, NOW())
+                (user_id, embedding, content_text, source_type, source_date, metadata)
+            VALUES ($1, $2::vector, $3, $4, $5, $6::jsonb)
             RETURNING id
-        """, user_id, embedding, source_text, source_type, source_date, metadata or {})
+        """, user_id, embedding_str, source_text, source_type, source_date, metadata_str)
         
         logger.debug(f"Stored embedding: record_id={record_id}, user={user_id}, type={source_type}")
         return record_id
@@ -77,17 +82,21 @@ async def similarity_search(
         相似度 = 1 - 余弦距离
     """
     threshold = similarity_threshold if similarity_threshold is not None else settings.SIMILARITY_THRESHOLD
-    
+
+    # asyncpg-pgvector 适配器：把 query_vector 转为字符串形式
+    query_vector_str = "[" + ",".join(str(x) for x in query_vector) + "]"
+
     # 动态构建 WHERE 条件
     conditions = ["user_id = $2"]
     params_idx = 3
-    params = [query_vector, user_id]
+    params = [query_vector_str, user_id]
     
     if source_type_filter and len(source_type_filter) > 0:
-        placeholders = ",".join([f"${params_idx}" for _ in source_type_filter])
-        conditions.append(f"source_type IN ({placeholders})")
-        params.extend(source_type_filter)
-        params_idx += len(source_type_filter)
+        # source_type_filter 是内部白名单常量（非用户输入），直接拼进 SQL 避免 asyncpg 类型推断问题
+        safe_types = [t.replace("'", "''") for t in source_type_filter if isinstance(t, str)]
+        if safe_types:
+            in_clause = ",".join([f"'{t}'" for t in safe_types])
+            conditions.append(f"source_type IN ({in_clause})")
     
     if date_start is not None:
         conditions.append(f"source_date >= ${params_idx}")
@@ -103,13 +112,13 @@ async def similarity_search(
     
     sql = f"""
         SELECT 
-            id, user_id, source_text, source_type, source_date, 
+            id, user_id, content_text, source_type, source_date, 
             metadata, created_at,
             1 - (embedding <=> $1::vector) AS similarity
         FROM user_health_embeddings
         WHERE {where_clause}
         ORDER BY similarity DESC
-        LIMIT ${params_idx}
+        LIMIT ${params_idx}::int
     """
     params.append(top_k)
     

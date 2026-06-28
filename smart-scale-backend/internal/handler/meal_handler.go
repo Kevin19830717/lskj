@@ -127,3 +127,45 @@ func (h *MealHandler) GetDailySummary(c *gin.Context) {
 
 	c.JSON(http.StatusOK, model.Success(result))
 }
+
+// UpdateWeighRecord 更新称重记录
+// PUT /api/v1/records/:id
+func (h *MealHandler) UpdateWeighRecord(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid record id"))
+		return
+	}
+
+	var req model.WeighInRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request: "+err.Error()))
+		return
+	}
+
+	if err := h.mealService.UpdateWeighRecord(c.Request.Context(), id, &req); err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Success(nil))
+}
+
+// DeleteWeighRecord 删除称重记录
+// DELETE /api/v1/records/:id
+func (h *MealHandler) DeleteWeighRecord(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid record id"))
+		return
+	}
+
+	if err := h.mealService.DeleteWeighRecord(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Success(nil))
+}

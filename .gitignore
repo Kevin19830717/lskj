@@ -24,6 +24,14 @@ Thumbs.db
 /smart-scale-backend/frontend-react/dist
 /smart-scale-backend/frontend-react/node_modules
 
+# Frontend build output (deployed to Go backend static folder)
+smart-scale-backend/frontend/assets/
+smart-scale-backend/frontend/index.html
+smart-scale-backend/frontend/favicon.svg
+smart-scale-backend/frontend/icons.svg
+smart-scale-backend/frontend/manifest.json
+smart-scale-backend/frontend/sw.js
+
 # Node
 node_modules/
 package-lock.json
@@ -34,3 +42,7 @@ kapianshuju_fix.txt
 final.json
 Kevin.json
 my_doc/
+
+# Uploads
+uploads/
+smart-scale-backend/uploads/

@@ -2,14 +2,17 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
 	"smart-scale-backend/internal/config"
+	"smart-scale-backend/internal/database"
 	"smart-scale-backend/internal/model"
 	"smart-scale-backend/internal/repository"
+	"smart-scale-backend/pkg/dashscope"
 
 	"github.com/sirupsen/logrus"
 )
@@ -442,6 +445,9 @@ func (s *SummaryService) archiveDailyToWeekly(ctx context.Context, threshold tim
 
 			// 聚合这一周的所有日度数据
 			mergedInsights := s.mergeInsights(ctx, weekSummaries, "weekly")
+			weekEnd := periodEndInclusive(weekStart, "weekly")
+			mergedInsights["period_start"] = weekStart.Format("2006-01-02")
+			mergedInsights["period_end"] = weekEnd.Format("2006-01-02")
 			summary := &model.AnalysisSummary{
 				UserID:      userID,
 				SummaryDate: weekStart,
@@ -498,6 +504,9 @@ func (s *SummaryService) archiveWeeklyToMonthly(ctx context.Context, threshold t
 			}
 
 			mergedInsights := s.mergeInsights(ctx, monthSummaries, "monthly")
+			monthEnd := periodEndInclusive(monthStart, "monthly")
+			mergedInsights["period_start"] = monthStart.Format("2006-01-02")
+			mergedInsights["period_end"] = monthEnd.Format("2006-01-02")
 			summary := &model.AnalysisSummary{
 				UserID:      userID,
 				SummaryDate: monthStart,
@@ -552,6 +561,9 @@ func (s *SummaryService) archiveMonthlyToYearly(ctx context.Context, threshold t
 			}
 
 			mergedInsights := s.mergeInsights(ctx, yearSummaries, "yearly")
+			yearEnd := periodEndInclusive(yearStart, "yearly")
+			mergedInsights["period_start"] = yearStart.Format("2006-01-02")
+			mergedInsights["period_end"] = yearEnd.Format("2006-01-02")
 			summary := &model.AnalysisSummary{
 				UserID:      userID,
 				SummaryDate: yearStart,
@@ -567,6 +579,28 @@ func (s *SummaryService) archiveMonthlyToYearly(ctx context.Context, threshold t
 		logrus.Infof("Archived monthly -> yearly for user %d: %d years", userID, len(yearMap))
 	}
 	return nil
+}
+
+// periodEndInclusive 计算周期的结束日期（inclusive：包含当天）
+// weekly: start + 6 天（周一到周日，共7天）
+// monthly: 当月最后一天
+// yearly: 当年12月31日
+func periodEndInclusive(start time.Time, summaryType string) time.Time {
+	switch summaryType {
+	case "weekly":
+		return start.AddDate(0, 0, 6)
+	case "monthly":
+		return start.AddDate(0, 1, -1)
+	case "yearly":
+		return time.Date(start.Year(), 12, 31, 0, 0, 0, 0, start.Location())
+	default:
+		return start
+	}
+}
+
+// isPeriodComplete 判断周期是否已完整结束（即当前日期已超过周期结束日）
+func isPeriodComplete(periodEnd time.Time) bool {
+	return time.Now().After(periodEnd)
 }
 
 // mergeInsights 将多条摘要的 insights 合并
@@ -730,6 +764,459 @@ func (s *SummaryService) DeleteSummary(ctx context.Context, userID int, summaryI
 	return s.summaryRepo.DeleteByID(ctx, summaryID)
 }
 
+// DeleteAllExceptDaily 删除用户除日报外的全部摘要
+func (s *SummaryService) DeleteAllExceptDaily(ctx context.Context, userID int) (int64, error) {
+	return s.summaryRepo.DeleteAllByUserExceptDaily(ctx, userID)
+}
+
+// GenerateNextMissingSummary 生成下一条缺失的摘要（从最远到最近）
+func (s *SummaryService) GenerateNextMissingSummary(ctx context.Context, userID int, summaryType string) (*model.AnalysisSummary, error) {
+	switch summaryType {
+	case "daily":
+		return s.GenerateSummary(ctx, userID, "daily")
+	case "weekly":
+		return s.generateNextMissingWeekly(ctx, userID)
+	case "monthly":
+		return s.generateNextMissingMonthly(ctx, userID)
+	case "yearly":
+		return s.generateNextMissingYearly(ctx, userID)
+	default:
+		return nil, fmt.Errorf("unsupported summary type: %s", summaryType)
+	}
+}
+
+// generateNextMissingWeekly 生成最旧的缺失周报（跳过未满7天的不完整周期）
+func (s *SummaryService) generateNextMissingWeekly(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
+	oldest, err := s.mealRepo.GetOldestRecordDate(ctx, userID)
+	if err != nil || oldest == nil {
+		return nil, fmt.Errorf("no records found")
+	}
+
+	// 多取几个候选，跳过尚未结束的周期
+	weekStarts, _ := s.summaryRepo.GetWeekStartsWithoutWeeklySummary(ctx, userID, *oldest, 20)
+	for _, ws := range weekStarts {
+		weekEnd := periodEndInclusive(ws, "weekly") // 周一到周日（inclusive）
+		if !isPeriodComplete(weekEnd) {
+			continue // 周期未结束，跳过避免数据失真
+		}
+		dailies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "daily", ws, weekEnd)
+		if len(dailies) == 0 {
+			continue
+		}
+
+		merged := s.mergeInsights(ctx, dailies, "weekly")
+		merged["period_start"] = ws.Format("2006-01-02")
+		merged["period_end"] = weekEnd.Format("2006-01-02")
+		wSummary := &model.AnalysisSummary{
+			UserID: userID, SummaryDate: ws, SummaryType: "weekly", Source: "auto", Insights: merged,
+		}
+		if err := s.summaryRepo.Create(ctx, wSummary); err != nil {
+			return nil, fmt.Errorf("failed to save weekly summary: %w", err)
+		}
+		logrus.Infof("Generated next missing weekly summary for user %d starting %s", userID, ws.Format("2006-01-02"))
+		return wSummary, nil
+	}
+	return nil, nil
+}
+
+// generateNextMissingMonthly 生成最旧的缺失月报（跳过未满月的不完整周期）
+func (s *SummaryService) generateNextMissingMonthly(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
+	oldest, err := s.mealRepo.GetOldestRecordDate(ctx, userID)
+	if err != nil || oldest == nil {
+		return nil, fmt.Errorf("no records found")
+	}
+
+	monthStarts, _ := s.summaryRepo.GetMonthStartsWithoutMonthlySummary(ctx, userID, *oldest, 20)
+	for _, ms := range monthStarts {
+		monthEnd := periodEndInclusive(ms, "monthly") // 月初到月末（inclusive）
+		if !isPeriodComplete(monthEnd) {
+			continue
+		}
+		weeklies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "weekly", ms, monthEnd)
+		if len(weeklies) == 0 {
+			continue
+		}
+
+		merged := s.mergeInsights(ctx, weeklies, "monthly")
+		merged["period_start"] = ms.Format("2006-01-02")
+		merged["period_end"] = monthEnd.Format("2006-01-02")
+		mSummary := &model.AnalysisSummary{
+			UserID: userID, SummaryDate: ms, SummaryType: "monthly", Source: "auto", Insights: merged,
+		}
+		if err := s.summaryRepo.Create(ctx, mSummary); err != nil {
+			return nil, fmt.Errorf("failed to save monthly summary: %w", err)
+		}
+		logrus.Infof("Generated next missing monthly summary for user %d starting %s", userID, ms.Format("2006-01"))
+		return mSummary, nil
+	}
+	return nil, nil
+}
+
+// generateNextMissingYearly 生成最旧的缺失年报（跳过未满年的不完整周期）
+func (s *SummaryService) generateNextMissingYearly(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
+	oldest, err := s.mealRepo.GetOldestRecordDate(ctx, userID)
+	if err != nil || oldest == nil {
+		return nil, fmt.Errorf("no records found")
+	}
+
+	yearStarts, _ := s.summaryRepo.GetYearStartsWithoutYearlySummary(ctx, userID, *oldest, 20)
+	for _, ys := range yearStarts {
+		yearEnd := periodEndInclusive(ys, "yearly") // 1月1日到12月31日（inclusive）
+		if !isPeriodComplete(yearEnd) {
+			continue
+		}
+		monthlies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "monthly", ys, yearEnd)
+		if len(monthlies) == 0 {
+			continue
+		}
+
+		merged := s.mergeInsights(ctx, monthlies, "yearly")
+		merged["period_start"] = ys.Format("2006-01-02")
+		merged["period_end"] = yearEnd.Format("2006-01-02")
+		ySummary := &model.AnalysisSummary{
+			UserID: userID, SummaryDate: ys, SummaryType: "yearly", Source: "auto", Insights: merged,
+		}
+		if err := s.summaryRepo.Create(ctx, ySummary); err != nil {
+			return nil, fmt.Errorf("failed to save yearly summary: %w", err)
+		}
+
+		logrus.Infof("Generated next missing yearly summary for user %d starting %s", userID, ys.Format("2006"))
+		return ySummary, nil
+	}
+	return nil, nil
+}
+
+// ==================== AI 总结页生成 ====================
+
+// GenerateNextMissingSummaryWithAI 智能生成：
+// 1. 若有缺失的数据报告（周/月/年），先生成最旧的那条（不含AI）
+// 2. 若数据报告齐全，找到最近一条缺AI总结的报告，生成AI总结并覆盖insights
+func (s *SummaryService) GenerateNextMissingSummaryWithAI(ctx context.Context, userID int, summaryType string) (*model.AnalysisSummary, string, error) {
+	// Step 1: 先尝试生成缺失的数据报告
+	summary, err := s.GenerateNextMissingSummary(ctx, userID, summaryType)
+	if err != nil {
+		// "no records found"表示没有缺失的数据报告，继续生成AI总结
+		if !strings.Contains(err.Error(), "no records found") {
+			return nil, "", err
+		}
+	}
+	if summary != nil {
+		return summary, "data", nil // 生成了新的数据报告（尚无AI总结）
+	}
+
+	// Step 2: 数据报告齐全，找最近一条缺AI总结的报告
+	target, err := s.findNearestReportWithoutAISummary(ctx, userID, summaryType)
+	if err != nil {
+		return nil, "", err
+	}
+	if target == nil {
+		return nil, "complete", nil // 所有报告都有AI总结了
+	}
+
+	// Step 2.5: 修复周期日期（旧数据可能使用了错误的AddDate逻辑）
+	if target.Insights == nil {
+		target.Insights = make(map[string]interface{})
+	}
+	correctEnd := periodEndInclusive(target.SummaryDate, summaryType)
+	correctEndStr := correctEnd.Format("2006-01-02")
+	startStr := target.SummaryDate.Format("2006-01-02")
+	// 如果当前period_end错误（不是inclusive end），修正它
+	if currentEnd, ok := target.Insights["period_end"].(string); !ok || currentEnd != correctEndStr {
+		target.Insights["period_start"] = startStr
+		target.Insights["period_end"] = correctEndStr
+	}
+
+	// Step 3: 生成AI总结
+	aiSummary, aiAdvice, err := s.generateAISummaryForReport(ctx, userID, target)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to generate AI summary: %w", err)
+	}
+
+	// Step 4: 将AI总结写入insights并更新
+	target.Insights["ai_summary"] = aiSummary
+	target.Insights["ai_advice"] = aiAdvice
+	if err := s.summaryRepo.UpdateByID(ctx, target.ID, target.Insights); err != nil {
+		return nil, "", fmt.Errorf("failed to save AI summary: %w", err)
+	}
+
+	logrus.Infof("Generated AI summary for user %d %s report %s", userID, summaryType, target.SummaryDate.Format("2006-01-02"))
+	return target, "ai", nil
+}
+
+// findNearestReportWithoutAISummary 从近到远找第一条没有ai_summary字段的周/月/年报
+func (s *SummaryService) findNearestReportWithoutAISummary(ctx context.Context, userID int, summaryType string) (*model.AnalysisSummary, error) {
+	if summaryType == "daily" {
+		return nil, nil // 日报不需要AI总结
+	}
+	reports, err := s.summaryRepo.FindByUserAndType(ctx, userID, summaryType, 100)
+	if err != nil {
+		return nil, err
+	}
+	// reports 已按 summary_date DESC 排序（从近到远）
+	for _, r := range reports {
+		if r.Insights == nil {
+			return r, nil
+		}
+		if _, hasAI := r.Insights["ai_summary"]; !hasAI {
+			return r, nil
+		}
+	}
+	return nil, nil
+}
+
+// generateAISummaryForReport 调用 qwen3.6flash 生成AI总结
+// 输入：用户个人信息 + 当期饮食数据 + 前一期报告内容（如有）
+// 输出：当期总结 + 下期建议
+func (s *SummaryService) generateAISummaryForReport(ctx context.Context, userID int, report *model.AnalysisSummary) (string, string, error) {
+	// 1. 获取用户画像
+	profile, err := s.getUserProfile(ctx, userID)
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to get user profile, proceeding without it")
+	}
+
+	// 2. 获取前一期报告
+	prevReport := s.getPreviousPeriodReport(ctx, userID, report.SummaryType, report.SummaryDate)
+
+	// 3. 构建prompt
+	prompt := s.buildAISummaryPrompt(report, profile, prevReport)
+
+	// 4. 调用 DashScope
+	client := dashscope.NewClient(s.cfg.Aliyun.APIKey)
+	model := s.cfg.Aliyun.TextModel
+	if model == "" {
+		model = "qwen-plus"
+	}
+
+	resp, err := client.Responses(&dashscope.ResponsesRequest{
+		Model: model,
+		Input: []dashscope.Message{
+			{Role: "system", Content: "你是专业的营养师AI助手。请根据用户的健康数据和饮食记录，生成简洁、专业、有建设性的营养总结和饮食建议。用中文回答，不要使用emoji。"},
+			{Role: "user", Content: prompt},
+		},
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("dashscope API call failed: %w", err)
+	}
+
+	result := resp.ExtractText()
+	if result == "" {
+		return "", "", fmt.Errorf("empty response from LLM")
+	}
+
+	// 5. 解析返回：尝试分离总结和建议
+	summary, advice := parseAIResponse(result)
+	return summary, advice, nil
+}
+
+// getUserProfile 直接查询用户画像
+func (s *SummaryService) getUserProfile(ctx context.Context, userID int) (*model.UserProfile, error) {
+	query := `SELECT user_id, gender, age, height_cm, weight_kg, health_goal, allergies
+	          FROM user_profiles WHERE user_id = $1`
+	var p model.UserProfile
+	var age *int
+	var heightCm, weightKg *float64
+	var healthGoal *string
+	var allergiesJSON []byte
+
+	err := database.Pool.QueryRow(ctx, query, userID).Scan(
+		&p.UserID, &p.Gender, &age, &heightCm, &weightKg, &healthGoal, &allergiesJSON,
+	)
+	if err != nil {
+		return nil, err
+	}
+	p.Age = age
+	p.HeightCm = heightCm
+	p.WeightKg = weightKg
+	if healthGoal != nil {
+		p.HealthGoal = *healthGoal
+	}
+	if allergiesJSON != nil {
+		_ = json.Unmarshal(allergiesJSON, &p.Allergies)
+	}
+	return &p, nil
+}
+
+// getPreviousPeriodReport 获取前一期同类型报告
+func (s *SummaryService) getPreviousPeriodReport(ctx context.Context, userID int, summaryType string, currentDate time.Time) *model.AnalysisSummary {
+	var prevDate time.Time
+	switch summaryType {
+	case "weekly":
+		prevDate = currentDate.AddDate(0, 0, -7)
+	case "monthly":
+		prevDate = currentDate.AddDate(0, -1, 0)
+	case "yearly":
+		prevDate = currentDate.AddDate(-1, 0, 0)
+	default:
+		return nil
+	}
+	report, _ := s.summaryRepo.FindByUserDateType(ctx, userID, prevDate, summaryType)
+	return report
+}
+
+// buildAISummaryPrompt 构建AI总结的prompt
+func (s *SummaryService) buildAISummaryPrompt(report *model.AnalysisSummary, profile *model.UserProfile, prevReport *model.AnalysisSummary) string {
+	typeLabel := map[string]string{"weekly": "周报", "monthly": "月报", "yearly": "年报"}[report.SummaryType]
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("请为以下%s生成营养总结和下期饮食建议。\n\n", typeLabel))
+
+	// 用户信息
+	if profile != nil {
+		sb.WriteString("## 用户信息\n")
+		genderMap := map[string]string{"male": "男", "female": "女"}
+		goalMap := map[string]string{"lose_weight": "减脂", "gain_weight": "增重", "maintain": "维持", "muscle_gain": "增肌", "health_maintenance": "健康管理"}
+		sb.WriteString(fmt.Sprintf("- 性别：%s，年龄：%d岁，身高：%.0fcm，体重：%.1fkg\n",
+			genderMap[profile.Gender], func() int { if profile.Age != nil { return *profile.Age }; return 0 }(),
+			func() float64 { if profile.HeightCm != nil { return *profile.HeightCm }; return 0 }(),
+			func() float64 { if profile.WeightKg != nil { return *profile.WeightKg }; return 0 }()))
+		if profile.HealthGoal != "" {
+			sb.WriteString(fmt.Sprintf("- 健康目标：%s\n", goalMap[profile.HealthGoal]))
+		}
+		if len(profile.Allergies) > 0 {
+			sb.WriteString(fmt.Sprintf("- 过敏原：%s\n", strings.Join(profile.Allergies, "、")))
+		}
+		sb.WriteString("\n")
+	}
+
+	// 当期饮食数据
+	sb.WriteString(fmt.Sprintf("## 本期饮食数据（%s）\n", typeLabel))
+	ins := report.Insights
+	if ps, ok := ins["period_start"].(string); ok {
+		sb.WriteString(fmt.Sprintf("- 周期：%s ~ ", ps))
+		if pe, ok := ins["period_end"].(string); ok {
+			sb.WriteString(pe)
+		}
+		sb.WriteString("\n")
+	}
+	if v, ok := ins["total_meals"]; ok {
+		sb.WriteString(fmt.Sprintf("- 总餐次：%v\n", v))
+	}
+	if v, ok := ins["total_energy_kcal"]; ok {
+		sb.WriteString(fmt.Sprintf("- 总热量：%.1f kcal\n", toFloat(v)))
+	}
+	if v, ok := ins["avg_daily_energy_kcal"]; ok {
+		sb.WriteString(fmt.Sprintf("- 日均热量：%.1f kcal\n", toFloat(v)))
+	}
+	if v, ok := ins["total_protein_g"]; ok {
+		sb.WriteString(fmt.Sprintf("- 总蛋白质：%.1f g\n", toFloat(v)))
+	}
+	if v, ok := ins["total_fat_g"]; ok {
+		sb.WriteString(fmt.Sprintf("- 总脂肪：%.1f g\n", toFloat(v)))
+	}
+	if v, ok := ins["total_carbohydrate_g"]; ok {
+		sb.WriteString(fmt.Sprintf("- 总碳水：%.1f g\n", toFloat(v)))
+	}
+	// 微量元素
+	if v, ok := ins["total_sodium_mg"]; ok {
+		sb.WriteString(fmt.Sprintf("- 钠：%.1f mg\n", toFloat(v)))
+	}
+	if v, ok := ins["total_calcium_mg"]; ok {
+		sb.WriteString(fmt.Sprintf("- 钙：%.1f mg\n", toFloat(v)))
+	}
+	if v, ok := ins["total_iron_mg"]; ok {
+		sb.WriteString(fmt.Sprintf("- 铁：%.1f mg\n", toFloat(v)))
+	}
+	if v, ok := ins["total_potassium_mg"]; ok {
+		sb.WriteString(fmt.Sprintf("- 钾：%.1f mg\n", toFloat(v)))
+	}
+	if v, ok := ins["total_vitamin_c_mg"]; ok {
+		sb.WriteString(fmt.Sprintf("- 维生素C：%.1f mg\n", toFloat(v)))
+	}
+	if v, ok := ins["total_cholesterol_mg"]; ok {
+		sb.WriteString(fmt.Sprintf("- 胆固醇：%.1f mg\n", toFloat(v)))
+	}
+	// 常吃食物
+	if tf, ok := ins["top_foods"]; ok {
+		sb.WriteString("- 常吃食物：")
+		if arr, ok := tf.([]interface{}); ok {
+			names := make([]string, 0, len(arr))
+			for _, f := range arr {
+				if m, ok := f.(map[string]interface{}); ok {
+					if name, ok := m["name"].(string); ok && name != "" {
+						names = append(names, name)
+					}
+				}
+			}
+			if len(names) > 5 {
+				names = names[:5]
+			}
+			sb.WriteString(strings.Join(names, "、"))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+
+	// 前一期报告内容
+	if prevReport != nil && prevReport.Insights != nil {
+		sb.WriteString(fmt.Sprintf("## 前一期%s内容\n", typeLabel))
+		pIns := prevReport.Insights
+		if v, ok := pIns["avg_daily_energy_kcal"]; ok {
+			sb.WriteString(fmt.Sprintf("- 前期日均热量：%.1f kcal\n", toFloat(v)))
+		}
+		if v, ok := pIns["total_meals"]; ok {
+			sb.WriteString(fmt.Sprintf("- 前期总餐次：%v\n", v))
+		}
+		if prevAI, ok := pIns["ai_summary"].(string); ok && prevAI != "" {
+			sb.WriteString(fmt.Sprintf("- 前期AI总结摘要：%s\n", truncate(prevAI, 300)))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(fmt.Sprintf("## 输出要求\n"))
+	sb.WriteString(fmt.Sprintf("请输出两部分，用【本期总结】和【下期建议】标记分隔：\n"))
+	sb.WriteString(fmt.Sprintf("1.【本期总结】：总结本期饮食的营养状况、存在的问题、与前期对比的变化趋势（约150字）\n"))
+	sb.WriteString(fmt.Sprintf("2.【下期建议】：针对下一个%s的饮食改善建议，结合用户健康目标（约150字）\n", typeLabel))
+
+	return sb.String()
+}
+
+// parseAIResponse 解析AI返回，分离总结和建议
+func parseAIResponse(text string) (summary, advice string) {
+	// 尝试按标记分割
+	summaryMark := "【本期总结】"
+	adviceMark := "【下期建议】"
+	sIdx := strings.Index(text, summaryMark)
+	aIdx := strings.Index(text, adviceMark)
+
+	if sIdx >= 0 && aIdx >= 0 && aIdx > sIdx {
+		summary = strings.TrimSpace(text[sIdx+len(summaryMark) : aIdx])
+		advice = strings.TrimSpace(text[aIdx+len(adviceMark):])
+	} else {
+		// 没找到标记，整体作为总结
+		summary = strings.TrimSpace(text)
+		advice = ""
+	}
+	return
+}
+
+// toFloat 将 interface{} 转为 float64
+func toFloat(v interface{}) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	default:
+		return 0
+	}
+}
+
+// truncate 截断字符串到指定长度
+func truncate(s string, maxLen int) string {
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	return string(r[:maxLen]) + "..."
+}
+
 // UpdateSummary 更新指定摘要的 insights
 func (s *SummaryService) UpdateSummary(ctx context.Context, userID int, summaryID int64, insights map[string]interface{}) error {
 	existing, err := s.summaryRepo.FindByID(ctx, summaryID)
@@ -800,7 +1287,7 @@ func (s *SummaryService) GenerateWeeklySummary(ctx context.Context, userID int) 
 	}
 
 	// 查本周已有的日报
-	weekEnd := weekStart.AddDate(0, 0, 7)
+	weekEnd := periodEndInclusive(weekStart, "weekly")
 	dailySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "daily", weekStart, weekEnd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query daily summaries: %w", err)
@@ -838,7 +1325,7 @@ func (s *SummaryService) GenerateMonthlySummary(ctx context.Context, userID int)
 		return existing, nil
 	}
 
-	monthEnd := monthStart.AddDate(0, 1, 0)
+	monthEnd := periodEndInclusive(monthStart, "monthly")
 	weeklySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "weekly", monthStart, monthEnd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query weekly summaries: %w", err)
@@ -985,7 +1472,7 @@ func (s *SummaryService) IncrementalBackfill(ctx context.Context, userID int) (*
 	// ---- Step 1: 周报（最多10周） ----
 	weekStarts, _ := s.summaryRepo.GetWeekStartsWithoutWeeklySummary(ctx, userID, *oldest, maxWeekly)
 	for _, ws := range weekStarts {
-		weekEnd := ws.AddDate(0, 0, 7)
+		weekEnd := periodEndInclusive(ws, "weekly")
 		dailies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "daily", ws, weekEnd)
 		if len(dailies) == 0 {
 			continue
@@ -1005,7 +1492,7 @@ func (s *SummaryService) IncrementalBackfill(ctx context.Context, userID int) (*
 	// ---- Step 2: 月报（最多6月） ----
 	monthStarts, _ := s.summaryRepo.GetMonthStartsWithoutMonthlySummary(ctx, userID, *oldest, maxMonthly)
 	for _, ms := range monthStarts {
-		monthEnd := ms.AddDate(0, 1, 0)
+		monthEnd := periodEndInclusive(ms, "monthly")
 		weeklies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "weekly", ms, monthEnd)
 		if len(weeklies) == 0 {
 			continue
@@ -1025,7 +1512,7 @@ func (s *SummaryService) IncrementalBackfill(ctx context.Context, userID int) (*
 	// ---- Step 3: 年报（最多2年） ----
 	yearStarts, _ := s.summaryRepo.GetYearStartsWithoutYearlySummary(ctx, userID, *oldest, maxYearly)
 	for _, ys := range yearStarts {
-		yearEnd := ys.AddDate(1, 0, 0)
+		yearEnd := periodEndInclusive(ys, "yearly")
 		monthlies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "monthly", ys, yearEnd)
 		if len(monthlies) == 0 {
 			continue

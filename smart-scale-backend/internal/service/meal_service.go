@@ -160,3 +160,40 @@ func (s *MealService) GetMealsInDays(ctx context.Context, userID int, days int) 
 	start := lastActivity.AddDate(0, 0, -(days * 4))
 	return s.mealRepo.QueryRecordsByDateRange(ctx, userID, start, end)
 }
+
+// UpdateWeighRecord 更新称重记录
+func (s *MealService) UpdateWeighRecord(ctx context.Context, id int64, req *model.WeighInRequest) error {
+	if len(req.Ingredients) != len(req.RawWeightsG) {
+		return fmt.Errorf("ingredients and raw_weights_g length mismatch")
+	}
+
+	v := func(f float64) *float64 { return &f }
+	record := &model.WeighRecord{
+		Ingredients:         req.Ingredients,
+		RawWeightsG:         req.RawWeightsG,
+		CookingMethod:       req.CookingMethod,
+		CookedWeightG:       v(req.CookedWeightG),
+		CookedEnergyKcal:    v(req.CookedEnergyKcal),
+		CookedProteinG:      v(req.CookedProteinG),
+		CookedFatG:          v(req.CookedFatG),
+		CookedCarbohydrateG: v(req.CookedCarbohydrateG),
+		CookedSodiumMg:      v(req.CookedSodiumMg),
+		CookedCholesterolMg: v(req.CookedCholesterolMg),
+		CookedVitaminCMg:    v(req.CookedVitaminCMg),
+		CookedCalciumMg:     v(req.CookedCalciumMg),
+		CookedIronMg:        v(req.CookedIronMg),
+		CookedPotassiumMg:   v(req.CookedPotassiumMg),
+	}
+	var newTime *time.Time
+	if req.CreatedAt != "" {
+		if t, err := time.Parse("2006-01-02T15:04", req.CreatedAt); err == nil {
+			newTime = &t
+		}
+	}
+	return s.mealRepo.UpdateWeighRecord(ctx, id, record, newTime)
+}
+
+// DeleteWeighRecord 删除称重记录
+func (s *MealService) DeleteWeighRecord(ctx context.Context, id int64) error {
+	return s.mealRepo.DeleteWeighRecord(ctx, id)
+}

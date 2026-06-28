@@ -23,7 +23,7 @@ from models.schemas import (
 )
 from services.embedding_service import call_embedding_api
 from services.retrieval_service import similarity_search, store_embedding
-from services.generation_service import call_responses_api, generate_multimodal, RESPONSES_URL, HEADERS
+from services.generation_service import call_responses_api, generate_multimodal, RESPONSES_URL, HEADERS, CHAT_COMPLETIONS_URL
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -282,37 +282,52 @@ async def chat(req: ChatRequest):
     start_time = time.time()
 
     try:
-        # 1. 获取用户最近的 response_id（用于多轮记忆）
-        prev_response_id = await _get_last_response_id(req.user_id)
+        if req.mode == "expert":
+            # 专家模式：加载完整上下文
+            prev_response_id = await _get_last_response_id(req.user_id)
+            user_context = await _build_user_context(req.user_id)
+            archived_summaries = await _get_archived_summaries(req.user_id, req.message)
+            system_prompt = _get_chat_system_prompt(user_context, archived_summaries, mode="expert")
+            messages = [{"role": "system", "content": system_prompt}]
+            for h in req.history[-20:]:
+                messages.append({"role": h.role, "content": h.content})
+            messages.append({"role": "user", "content": req.message})
+            result = await call_responses_api(
+                messages=messages,
+                previous_response_id=prev_response_id,
+                temperature=0.5,
+                max_tokens=4096,
+            )
+            new_response_id = result.get("response_id", "")
+            if new_response_id:
+                await _save_response_id(req.user_id, new_response_id)
+        else:
+            # 快速模式：默认不加上下文，直接调用；但检测到时间关键词（如"2022年年报"）时注入归档数据
+            archived_summaries_fast = ""
+            if _match_time_keyword(req.message):
+                try:
+                    archived_summaries_fast = await _get_archived_summaries(req.user_id, req.message)
+                except Exception as e:
+                    logger.warning(f"Fast mode RAG retrieval failed: {e}")
 
-        # 2. 获取用户健康上下文 + 分层归档摘要
-        user_context = await _build_user_context(req.user_id)
-        archived_summaries = await _get_archived_summaries(req.user_id)
-
-        # 3. 组装 system prompt（含用户画像 + 归档知识库）
-        system_prompt = _get_chat_system_prompt(user_context, archived_summaries)
-
-        # 4. 组装 messages（system + 历史10轮 + 当前消息；历史做兜底防止 previous_response_id 截断丢上下文）
-        messages = [{"role": "system", "content": system_prompt}]
-        for h in req.history[-20:]:
-            messages.append({"role": h.role, "content": h.content})
-        messages.append({"role": "user", "content": req.message})
-
-        # 5. 调用 Responses API
-        result = await call_responses_api(
-            messages=messages,
-            previous_response_id=prev_response_id,
-            temperature=0.7,
-            max_tokens=2048,
-        )
-
-        # 6. 保存 response_id 供下次使用
-        new_response_id = result.get("response_id", "")
-        if new_response_id:
-            await _save_response_id(req.user_id, new_response_id)
+            if archived_summaries_fast:
+                sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n\n"
+                                "以下是用户的历史归档数据，请基于这些数据回答用户问题：\n"
+                                + archived_summaries_fast)
+            else:
+                sys_content = "你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。"
+            messages = [{"role": "system", "content": sys_content}]
+            for h in req.history[-10:]:
+                messages.append({"role": h.role, "content": h.content})
+            messages.append({"role": "user", "content": req.message})
+            result = await call_responses_api(
+                messages=messages,
+                temperature=0.7,
+                max_tokens=1024,
+            )
 
         elapsed = time.time() - start_time
-        logger.info(f"Chat completed in {elapsed:.1f}s, user={req.user_id}, response_id={new_response_id}")
+        logger.info(f"Chat completed in {elapsed:.1f}s, user={req.user_id}, mode={req.mode}")
 
         return ChatResponse(
             reply=result["content"],
@@ -327,8 +342,8 @@ async def chat(req: ChatRequest):
 # ==================== AI 流式对话 ====================
 
 @router.get("/chat/history", summary="获取聊天历史记录")
-async def get_chat_history(user_id: int, limit: int = 50):
-    """获取用户聊天历史记录"""
+async def get_chat_history(user_id: int, limit: int = 100):
+    """获取用户聊天历史记录（取最近 limit 条，按时间正序返回）"""
     history = await _get_chat_history(user_id, limit)
     return {"history": history}
 
@@ -347,11 +362,40 @@ async def reset_chat(user_id: int):
         raise HTTPException(status_code=500, detail="重置失败")
 
 
+@router.post("/chat/delete-last-user", summary="删除最后一条孤立的用户消息")
+async def delete_last_user_message(user_id: int):
+    """删除用户最后一条 user 消息（用于前端重发前去重，避免孤立 user 消息堆积）"""
+    try:
+        async with get_connection() as conn:
+            # 找到最后一条 user 消息的 id
+            last_user_id = await conn.fetchval(
+                "SELECT id FROM chat_messages WHERE user_id = $1 AND role = 'user' ORDER BY id DESC LIMIT 1",
+                user_id,
+            )
+            if last_user_id is not None:
+                # 检查它后面是否还有 assistant 消息（如果有，说明不是孤立的，不删）
+                next_msg = await conn.fetchval(
+                    "SELECT id FROM chat_messages WHERE user_id = $1 AND id > $2 ORDER BY id ASC LIMIT 1",
+                    user_id, last_user_id,
+                )
+                if next_msg is None:
+                    # 后面没有消息 → 这是一条孤立 user 消息，删除
+                    await conn.execute("DELETE FROM chat_messages WHERE id = $1", last_user_id)
+                    logger.info(f"Deleted orphan user message id={last_user_id} for user={user_id}")
+                    return {"status": "ok", "deleted": True}
+        return {"status": "ok", "deleted": False}
+    except Exception as e:
+        logger.error(f"Delete last user message failed for user={user_id}: {e}")
+        raise HTTPException(status_code=500, detail="删除失败")
+
+
 @router.post("/chat/stream", summary="AI健康对话(流式)")
 async def chat_stream(req: ChatRequest):
     """
-    AI 健康对话流式输出 — 使用 Responses API stream=True
-    返回 Server-Sent Events (SSE)，每行 data: {"delta": "文本片段"}
+    AI 健康对话流式输出 — 使用 Chat Completions API
+    快速模式：不加任何上下文，关闭思考，流式快速回复
+    专家模式：加载完整健康数据+归档报告，启用深度思考，流式输出思考过程+回复
+    返回 Server-Sent Events (SSE)
     """
     from fastapi.responses import StreamingResponse
     import json as _json
@@ -360,94 +404,174 @@ async def chat_stream(req: ChatRequest):
     start_time = time.time()
 
     async def event_generator():
+        # ===== 修复刷新吞消息：进入流式前先持久化用户消息 =====
+        # 即使后续 AI 响应中断/页面刷新，用户消息也已经落库不会丢失
+        await _save_chat_message(req.user_id, "user", req.message)
+
+        full_text = ""
+        full_thinking = ""
+
         try:
-            import asyncio
-            # 并行查询，减少等待时间
-            prev_response_id, user_context, archived_summaries = await asyncio.gather(
-                _get_last_response_id(req.user_id),
-                _build_user_context(req.user_id),
-                _get_archived_summaries(req.user_id),
-            )
-            system_prompt = _get_chat_system_prompt(user_context, archived_summaries)
+            if req.mode == "expert":
+                # ===== 专家模式：加载完整上下文 + 启用深度思考 =====
+                import asyncio
+                _, user_context, archived_summaries = await asyncio.gather(
+                    _get_last_response_id(req.user_id),
+                    _build_user_context(req.user_id),
+                    _get_archived_summaries(req.user_id, req.message),
+                )
+                system_prompt = _get_chat_system_prompt(user_context, archived_summaries, mode="expert")
+                messages = [{"role": "system", "content": system_prompt}]
+                for h in req.history[-20:]:
+                    messages.append({"role": h.role, "content": h.content})
+                messages.append({"role": "user", "content": req.message})
 
-            # 简单问候消息跳过历史上下文(previous_response_id)，
-            # 避免加载完整对话历史导致首字延迟过高（如"你好"原本要16-18s）
-            use_history = not _is_simple_message(req.message)
-            if not use_history:
-                prev_response_id = ""
-                logger.info(f"Simple message detected, skipping previous_response_id for user={req.user_id}")
+                # 专家模式：显式开启深度思考
+                payload = {
+                    "model": settings.TEXT_MODEL,
+                    "messages": messages,
+                    "stream": True,
+                    "max_tokens": 16384,
+                    "enable_thinking": True,
+                    "stream_options": {"include_usage": True},
+                }
 
-            messages = [{"role": "system", "content": system_prompt}]
-            # 注入最近历史对话（10轮=20条），确保上下文不丢失
-            # previous_response_id 可能因长回复被截断，这里提供可靠兜底
-            for h in req.history[-20:]:
-                messages.append({"role": h.role, "content": h.content})
-            messages.append({"role": "user", "content": req.message})
+                stream_error = None
+                try:
+                    async with httpx.AsyncClient(timeout=600) as client:
+                        async with client.stream("POST", CHAT_COMPLETIONS_URL, headers=HEADERS, json=payload) as response:
+                            if response.status_code != 200:
+                                await response.aread()
+                                err_msg = f"AI服务错误({response.status_code})"
+                                yield f"data: {_json.dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
+                                return
 
-            payload = {
-                "model": settings.TEXT_MODEL,
-                "input": messages,
-                "stream": True,
-                "max_output_tokens": 2048,
-            }
-            if prev_response_id:
-                payload["previous_response_id"] = prev_response_id
+                            async for line in response.aiter_lines():
+                                if not line or not line.startswith("data:"):
+                                    continue
+                                data_str = line[5:].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk = _json.loads(data_str)
+                                except _json.JSONDecodeError:
+                                    continue
 
-            full_text = ""
-            new_response_id = ""
+                                choices = chunk.get("choices", [])
+                                if not choices:
+                                    continue
+                                delta = choices[0].get("delta", {})
 
-            async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream("POST", RESPONSES_URL, headers=HEADERS, json=payload) as response:
-                    if response.status_code != 200:
-                        body = await response.aread()
-                        err_msg = f"AI服务错误({response.status_code})"
-                        yield f"data: {_json.dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
-                        return
+                                # 思考过程：原样转发，让用户看到完整真实推理流
+                                # 不再过滤英文行 —— 避免开头十秒空窗期，也避免删除模型真实推理
+                                reasoning = delta.get("reasoning_content", "")
+                                if reasoning:
+                                    full_thinking += reasoning
+                                    yield f"data: {_json.dumps({'thinking_delta': reasoning}, ensure_ascii=False)}\n\n"
 
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            event = _json.loads(data_str)
-                        except _json.JSONDecodeError:
-                            continue
+                                # 正式回复内容
+                                content = delta.get("content", "")
+                                if content:
+                                    full_text += content
+                                    yield f"data: {_json.dumps({'delta': content}, ensure_ascii=False)}\n\n"
 
-                        event_type = event.get("type", "")
+                            # 思考结束，通知前端切换到正式回答阶段
+                            if full_thinking:
+                                yield f"data: {_json.dumps({'thinking_end': True}, ensure_ascii=False)}\n\n"
+                except Exception as stream_exc:
+                    # 流式中断（如客户端断开/超时）：保存已收到的部分，避免丢消息
+                    logger.warning(f"Expert stream interrupted: {stream_exc}, saving partial reply len={len(full_text)}")
+                    stream_error = stream_exc
 
-                        if event_type == "response.created" or event_type == "response.in_progress":
-                            resp = event.get("response", {})
-                            if resp.get("id"):
-                                new_response_id = resp["id"]
+                # 保存助手回复（即使在 try 内中断，finally 已确保执行到这里）
+                if full_text:
+                    await _save_chat_message(req.user_id, "assistant", full_text)
 
-                        elif event_type == "response.output_text.delta":
-                            delta = event.get("delta", "")
-                            if delta:
-                                full_text += delta
-                                yield f"data: {_json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
+                elapsed = time.time() - start_time
+                logger.info(f"Expert stream chat completed in {elapsed:.1f}s, user={req.user_id}, "
+                           f"thinking_len={len(full_thinking)}, reply_len={len(full_text)}")
 
-                        elif event_type == "response.completed":
-                            resp = event.get("response", {})
-                            if resp.get("id"):
-                                new_response_id = resp["id"]
-                            break
+                yield f"data: {_json.dumps({'done': True}, ensure_ascii=False)}\n\n"
 
-            if new_response_id:
-                await _save_response_id(req.user_id, new_response_id)
+            else:
+                # ===== 快速模式：默认不加上下文，关闭思考，极速响应 =====
+                # 但若用户问题涉及历史数据查询（如"2022年年报"），仍注入 RAG 检索结果
+                archived_summaries_fast = ""
+                if _match_time_keyword(req.message):
+                    try:
+                        archived_summaries_fast = await _get_archived_summaries(req.user_id, req.message)
+                    except Exception as e:
+                        logger.warning(f"Fast mode RAG retrieval failed: {e}")
 
-            # 保存聊天记录到数据库
-            if full_text:
-                await _save_chat_message(req.user_id, "user", req.message)
-                await _save_chat_message(req.user_id, "assistant", full_text)
+                if archived_summaries_fast:
+                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n\n"
+                                    "以下是用户的历史归档数据，请基于这些数据回答用户问题：\n"
+                                    + archived_summaries_fast)
+                else:
+                    sys_content = "你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。"
+                messages = [{"role": "system", "content": sys_content}]
+                # 快速模式：仅保留最近3轮对话（6条），最小化上下文以极速响应
+                for h in req.history[-6:]:
+                    messages.append({"role": h.role, "content": h.content})
+                messages.append({"role": "user", "content": req.message})
 
-            elapsed = time.time() - start_time
-            logger.info(f"Stream chat completed in {elapsed:.1f}s, user={req.user_id}, response_id={new_response_id}")
+                # 快速模式：显式关闭思考，极速响应
+                payload = {
+                    "model": settings.TEXT_MODEL,
+                    "messages": messages,
+                    "stream": True,
+                    "max_tokens": 1024,
+                    "enable_thinking": False,
+                    "stream_options": {"include_usage": True},
+                }
 
-            yield f"data: {_json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+                try:
+                    async with httpx.AsyncClient(timeout=60) as client:
+                        async with client.stream("POST", CHAT_COMPLETIONS_URL, headers=HEADERS, json=payload) as response:
+                            if response.status_code != 200:
+                                await response.aread()
+                                err_msg = f"AI服务错误({response.status_code})"
+                                yield f"data: {_json.dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
+                                return
+
+                            async for line in response.aiter_lines():
+                                if not line or not line.startswith("data:"):
+                                    continue
+                                data_str = line[5:].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk = _json.loads(data_str)
+                                except _json.JSONDecodeError:
+                                    continue
+
+                                choices = chunk.get("choices", [])
+                                if not choices:
+                                    continue
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    full_text += content
+                                    yield f"data: {_json.dumps({'delta': content}, ensure_ascii=False)}\n\n"
+                except Exception as stream_exc:
+                    logger.warning(f"Fast stream interrupted: {stream_exc}, saving partial reply len={len(full_text)}")
+
+                # 保存助手回复（包括中断时的部分内容）
+                if full_text:
+                    await _save_chat_message(req.user_id, "assistant", full_text)
+
+                elapsed = time.time() - start_time
+                logger.info(f"Fast stream chat completed in {elapsed:.1f}s, user={req.user_id}, reply_len={len(full_text)}")
+
+                yield f"data: {_json.dumps({'done': True}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
+            # 兜底：异常情况下也要保存已收到的部分助手回复
+            if full_text:
+                try:
+                    await _save_chat_message(req.user_id, "assistant", full_text)
+                except Exception:
+                    pass
             logger.error(f"Stream chat failed: {e}", exc_info=True)
             yield f"data: {_json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
@@ -520,12 +644,16 @@ async def _save_chat_message(user_id: int, role: str, content: str):
 
 
 async def _get_chat_history(user_id: int, limit: int = 50) -> list:
-    """获取用户聊天历史"""
+    """获取用户聊天历史 — 取最近 limit 条，按时间正序返回"""
     try:
         async with get_connection() as conn:
+            # 先取最近 limit 条（DESC），再在 Python 中反转为时间正序（ASC）
+            # 这样用户即使超过 limit 条消息，最新的对话也不会被吞掉
             rows = await conn.fetch(
-                """SELECT role, content, created_at FROM chat_messages
-                   WHERE user_id = $1 ORDER BY created_at ASC LIMIT $2""",
+                """SELECT role, content, created_at FROM (
+                       SELECT role, content, created_at FROM chat_messages
+                       WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+                   ) t ORDER BY created_at ASC""",
                 user_id, limit,
             )
             return [{"role": r["role"], "content": r["content"], "created_at": str(r["created_at"])} for r in rows]
@@ -534,39 +662,249 @@ async def _get_chat_history(user_id: int, limit: int = 50) -> list:
         return []
 
 
-async def _get_archived_summaries(user_id: int) -> str:
-    """获取用户归档摘要（精简版，仅最近2条周报+1条月报）"""
-    parts = []
+async def _get_archived_summaries(user_id: int, query: str = "") -> str:
+    """获取与用户问题最相关的归档摘要（RAG 检索）。
+
+    架构：把所有周/月/年报的 insights 文本向量化存入 pgvector，
+    用户提问时用 query embedding 检索 top-k 最相关的摘要注入 prompt。
+    这样既能用上全部历史数据，又不会让 prompt 膨胀到几万字符。
+
+    Read-through cache 模式：
+    - 首次访问时，把所有未向量化的归档摘要 embed 并入库
+    - 之后的请求直接走向量检索
+    """
+    if not query or not query.strip():
+        # 无 query 时回退：取最近 1 周报 + 1 月报（避免空上下文）
+        return await _fallback_recent_summaries(user_id)
+
+    try:
+        # 1. 确保 user_analysis_summaries 中所有摘要都已向量化入库
+        await _ensure_summaries_embedded(user_id)
+
+        # 1.5 时间关键词识别：如果用户问句含"YYYY年"+"年报/月报/周报"，优先精确按年份匹配
+        time_matched = _match_time_keyword(query)
+        if time_matched:
+            year, s_type = time_matched
+            async with get_connection() as conn:
+                # 优先取该年的年报；若无则取该年所有月报；再无则取该年所有周报
+                rows = []
+                if s_type in ("yearly", "all"):
+                    rows = await conn.fetch(
+                        """SELECT source_date, source_type, content_text FROM user_health_embeddings
+                           WHERE user_id=$1 AND source_type='yearly_summary'
+                             AND EXTRACT(YEAR FROM source_date)=$2
+                           ORDER BY source_date DESC""",
+                        user_id, year)
+                if not rows:
+                    target_type = "monthly_summary" if s_type in ("monthly", "all") else "weekly_summary"
+                    rows = await conn.fetch(
+                        """SELECT source_date, source_type, content_text FROM user_health_embeddings
+                           WHERE user_id=$1 AND source_type=$2
+                             AND EXTRACT(YEAR FROM source_date)=$3
+                           ORDER BY source_date DESC""",
+                        user_id, target_type, year)
+            if rows:
+                type_label = {"yearly": "年", "monthly": "月", "weekly": "周", "all": ""}.get(s_type, "")
+                parts = [f"## 用户询问的{year}年{type_label}报数据（按时间精确匹配）"]
+                for r in rows[:8]:
+                    s_t_cn = {"yearly_summary": "年", "monthly_summary": "月",
+                              "weekly_summary": "周"}.get(r["source_type"], r["source_type"])
+                    parts.append(f"- [{s_t_cn}报 {r['source_date']}]\n{r['content_text']}")
+                result = "\n".join(parts)
+                logger.info(f"[rag] Time-match {year}/{s_type}: {len(rows)} rows, prompt_len={len(result)}")
+                return result
+            logger.info(f"[rag] Time-match {year}/{s_type}: no rows found, fallback to semantic search")
+
+        # 2. 用 query embedding 检索 top-k 最相关摘要
+        query_embedding_list, _ = await call_embedding_api([query])
+        if not query_embedding_list or not query_embedding_list[0]:
+            logger.warning("Empty query embedding, fallback to recent summaries")
+            return await _fallback_recent_summaries(user_id)
+        query_vector = query_embedding_list[0]
+
+        results = await similarity_search(
+            query_vector=query_vector,
+            user_id=user_id,
+            top_k=5,
+            source_type_filter=["weekly_summary", "monthly_summary", "yearly_summary"],
+            similarity_threshold=0.20,  # 摘要文本较长，阈值放低一些
+        )
+
+        if not results:
+            logger.info(f"[rag] No relevant summaries for query='{query[:30]}', fallback to recent")
+            return await _fallback_recent_summaries(user_id)
+
+        # 3. 把检索到的摘要格式化为 prompt 片段
+        parts = ["## 与本次问题最相关的历史归档数据（向量检索 top-k）"]
+        for r in results:
+            s_type = (r.get("source_type") or "").replace("_summary", "")
+            s_date = r.get("source_date")
+            sim = r.get("similarity", 0)
+            # content_text 是 embed 时存入的格式化文本，直接复用
+            text = r.get("content_text", "")
+            parts.append(f"- [{s_type}报 {s_date} 相似度{sim:.2f}]\n{text}")
+
+        result = "\n".join(parts)
+        logger.info(f"[rag] Retrieved {len(results)} summaries for query='{query[:30]}...', prompt_len={len(result)}")
+        return result
+    except Exception as e:
+        logger.warning(f"RAG retrieval failed, fallback to recent: {e}")
+        return await _fallback_recent_summaries(user_id)
+
+
+async def _ensure_summaries_embedded(user_id: int):
+    """确保 user_analysis_summaries 中所有摘要都已向量化入库（read-through cache）。
+
+    策略：
+    1. 查出所有归档摘要的 (summary_date, summary_type) 列表
+    2. 查出 user_health_embeddings 中已存在的 (source_date, source_type) 列表
+    3. 对差集批量 embed 入库
+    """
     try:
         async with get_connection() as conn:
-            # 最近2条周度摘要
-            weekly_rows = await conn.fetch(
+            # 所有归档摘要
+            summaries = await conn.fetch(
+                """SELECT summary_date, summary_type, insights FROM user_analysis_summaries
+                   WHERE user_id = $1 ORDER BY summary_date ASC""", user_id)
+            if not summaries:
+                return
+
+            # 已向量化的归档摘要（按 source_date + source_type 去重）
+            existing = await conn.fetch(
+                """SELECT DISTINCT source_date, source_type FROM user_health_embeddings
+                   WHERE user_id = $1
+                     AND source_type IN ('weekly_summary','monthly_summary','yearly_summary')""",
+                user_id)
+            existing_keys = {(r["source_date"], r["source_type"]) for r in existing}
+
+            # 找出待向量化的
+            type_map = {"weekly": "weekly_summary", "monthly": "monthly_summary", "yearly": "yearly_summary"}
+            to_embed = []
+            for r in summaries:
+                s_type = type_map.get(r["summary_type"])
+                if not s_type:
+                    continue
+                key = (r["summary_date"], s_type)
+                if key in existing_keys:
+                    continue
+                ins = _parse_insights(r["insights"])
+                text = _format_summary_for_embedding(r["summary_date"], r["summary_type"], ins)
+                if text:
+                    to_embed.append((r["summary_date"], s_type, text, ins))
+
+            if not to_embed:
+                return
+
+            logger.info(f"[rag] Embedding {len(to_embed)} new summaries for user={user_id}")
+            # 分批 embed（DashScope embedding API 单批最多 25 条）
+            BATCH = 25
+            total_embedded = 0
+            for i in range(0, len(to_embed), BATCH):
+                batch = to_embed[i:i + BATCH]
+                batch_texts = [t[2] for t in batch]
+                embeddings, _ = await call_embedding_api(batch_texts)
+                if not embeddings or len(embeddings) != len(batch):
+                    logger.warning(f"[rag] Batch {i//BATCH+1} count mismatch: got {len(embeddings) if embeddings else 0}, expected {len(batch)}")
+                    continue
+                for (s_date, s_type, text, ins), emb in zip(batch, embeddings):
+                    await store_embedding(
+                        user_id=user_id,
+                        embedding=emb,
+                        source_text=text,
+                        source_type=s_type,
+                        source_date=s_date,
+                        metadata={"insights": ins},
+                    )
+                total_embedded += len(batch)
+            logger.info(f"[rag] Successfully embedded {total_embedded}/{len(to_embed)} summaries for user={user_id}")
+    except Exception as e:
+        logger.warning(f"_ensure_summaries_embedded failed: {e}")
+
+
+def _format_summary_for_embedding(s_date, s_type: str, ins: dict) -> str:
+    """把摘要格式化为用于 embedding 的文本（也作为 prompt 注入文本）"""
+    try:
+        ps = ins.get("period_start", "")
+        pe = ins.get("period_end", "")
+        total_kcal = ins.get("total_energy_kcal", 0)
+        avg_kcal = ins.get("avg_daily_energy_kcal", 0)
+        total_p = ins.get("total_protein_g", 0)
+        total_f = ins.get("total_fat_g", 0)
+        total_c = ins.get("total_carbohydrate_g", 0)
+        meals = ins.get("total_meals", 0)
+        ai_summary = ins.get("ai_summary", "")
+        top_foods = ins.get("top_foods", [])
+
+        type_cn = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}.get(s_type, s_type)
+        line = (f"{type_cn}({s_date}) 周期{ps}~{pe}, {meals}餐, "
+                f"总热量{total_kcal:.0f}kcal(日均{avg_kcal:.0f}), "
+                f"蛋白{total_p:.0f}g/脂肪{total_f:.0f}g/碳水{total_c:.0f}g")
+        if top_foods:
+            food_names = ", ".join([f"{f.get('name','?')}({f.get('count',0)}次)"
+                                    for f in top_foods[:8] if isinstance(f, dict)])
+            line += f"\n常吃: {food_names}"
+        if ai_summary:
+            # 截断 AI 总结避免 embedding 文本过长
+            line += f"\nAI总结: {ai_summary[:500]}"
+        return line
+    except Exception:
+        return ""
+
+
+def _match_time_keyword(query: str):
+    """识别问句中的"YYYY年+年报/月报/周报"模式。
+
+    返回 (year, s_type) 元组，其中 s_type ∈ {'yearly','monthly','weekly','all'}。
+    无法识别时返回 None。
+
+    Examples:
+      "我2022年的年报信息是什么" -> (2022, 'yearly')
+      "2020年月报" -> (2020, 'monthly')
+      "2023年的数据" -> (2023, 'all')
+      "去年的年报" -> None（相对时间暂不处理，避免歧义）
+    """
+    import re
+    m = re.search(r'(20\d{2}|19\d{2})\s*年', query)
+    if not m:
+        return None
+    year = int(m.group(1))
+    q_lower = query.lower()
+    if "年报" in q_lower or "年度" in q_lower or "annual" in q_lower:
+        return (year, "yearly")
+    if "月报" in q_lower or "月度" in q_lower or "monthly" in q_lower:
+        return (year, "monthly")
+    if "周报" in q_lower or "weekly" in q_lower:
+        return (year, "weekly")
+    # 默认：用户问"YYYY年的数据"但没指定类型，优先取年报
+    return (year, "all")
+
+
+async def _fallback_recent_summaries(user_id: int) -> str:
+    try:
+        async with get_connection() as conn:
+            parts = []
+            weekly = await conn.fetchrow(
                 """SELECT summary_date, insights FROM user_analysis_summaries
                    WHERE user_id = $1 AND summary_type = 'weekly'
-                   ORDER BY summary_date DESC LIMIT 2""", user_id)
-            if weekly_rows:
-                parts.append("## 每周饮食趋势")
-                for r in weekly_rows:
-                    ins = _parse_insights(r["insights"])
-                    avg = ins.get("avg_daily_energy_kcal", 0)
-                    parts.append(f"- 周报({r['summary_date']}): 日均{avg:.0f}kcal")
-
-            # 最近1条月度摘要
-            monthly_rows = await conn.fetch(
+                   ORDER BY summary_date DESC LIMIT 1""", user_id)
+            if weekly:
+                ins = _parse_insights(weekly["insights"])
+                text = _format_summary_for_embedding(weekly["summary_date"], "weekly", ins)
+                if text:
+                    parts.append(f"- [周报 {weekly['summary_date']}]\n{text}")
+            monthly = await conn.fetchrow(
                 """SELECT summary_date, insights FROM user_analysis_summaries
                    WHERE user_id = $1 AND summary_type = 'monthly'
                    ORDER BY summary_date DESC LIMIT 1""", user_id)
-            if monthly_rows:
-                parts.append("\n## 月度饮食总结")
-                for r in monthly_rows:
-                    ins = _parse_insights(r["insights"])
-                    avg = ins.get("avg_daily_energy_kcal", 0)
-                    parts.append(f"- 月报({r['summary_date']}): 日均{avg:.0f}kcal")
-
+            if monthly:
+                ins = _parse_insights(monthly["insights"])
+                text = _format_summary_for_embedding(monthly["summary_date"], "monthly", ins)
+                if text:
+                    parts.append(f"- [月报 {monthly['summary_date']}]\n{text}")
+            return "## 最近历史归档数据\n" + "\n".join(parts) if parts else "暂无历史归档数据"
     except Exception as e:
-        logger.warning(f"Failed to get archived summaries: {e}")
-
-    return "\n".join(parts) if parts else "暂无历史归档数据"
+        logger.warning(f"_fallback_recent_summaries failed: {e}")
+        return "暂无历史归档数据"
 
 
 def _parse_insights(raw) -> dict:
@@ -635,15 +973,47 @@ async def _build_user_context(user_id: int) -> str:
     return "\n".join(parts) if parts else "暂无用户健康数据。"
 
 
-def _get_chat_system_prompt(user_context: str, archived_summaries: str = "") -> str:
+def _get_chat_system_prompt(user_context: str, archived_summaries: str = "", mode: str = "fast") -> str:
+    if mode == "expert":
+        style_guide = (
+            "## 当前对话模式：专家模式（深度思考）\n"
+            "## 关于内部思考过程（reasoning_content）的强制要求\n"
+            "1. 必须使用中文，严禁出现任何英文单词或英文句子。\n"
+            "2. 直接对用户问题进行分析推理，给出你的判断依据和结论方向。\n"
+            "3. 严禁在思考中复述、翻译、解释本指令本身的内容。\n"
+            "4. 严禁在思考中出现「Analyze」「Draft」「Check」「Structure」「Output」等英文标题或步骤标记。\n"
+            "5. 思考要精炼聚焦，一次推演即可，严禁重复相同内容。\n"
+            "6. 思考长度控制在200-500字，不要写元指令、不要写输出计划。\n"
+            "## 回答要求\n"
+            "用中文回复，使用标准Markdown语法输出，不要用emoji。\n"
+            "- 使用 **加粗** 突出关键概念、术语和结论；\n"
+            "- 使用 ### 小标题分章节组织内容；\n"
+            "- 使用有序或无序列表分点罗列数据支撑、原因解释、可执行方案；\n"
+            "- 涉及对比数据时使用Markdown表格呈现；\n"
+            "- 引用重要结论或补充说明时使用 > 引用块；\n"
+            "- 回复正文要详尽完整，单次回复不少于500字，复杂问题可更长；\n"
+            "- 避免空话套话，要让用户感受到专业、可信、有用的深度内容。\n"
+        )
+    else:
+        style_guide = (
+            "## 当前对话模式：快速模式\n"
+            "回答要求：用中文回复，使用标准Markdown语法输出，不要用emoji。\n"
+            "- 抓住用户核心问题给出明确回答，可使用 **加粗** 突出重点；\n"
+            "- 必要时使用列表补充1-2点要点；\n"
+            "- 单次回复长度建议100-300字；\n"
+            "- 如用户希望更详细的展开，可提示用户切换到「专家模式」获取深度分析。\n"
+        )
     prompt = (
         "你是智能饮食健康秤的AI助手。你可以回答任何问题，用户问什么就答什么，不要强行往饮食话题上靠。\n"
-        "回答要求：用中文，简洁直接，不要用emoji，不要过度展开。"
-        "只有用户主动询问饮食健康时才参考以下数据。\n\n"
+        f"{style_guide}"
+        "以下数据包含该用户的历史饮食报告（周/月/年报）和健康画像，"
+        "用户询问饮食、营养、健康相关问题时请基于这些数据给出具体、有依据的回答。"
+        "当用户问\"最近爱吃啥\"、\"饮食习惯\"、\"营养状况\"等问题时，请引用具体周/月/年报中的常吃食物和营养数据来回答，"
+        "而不是说\"未收录\"。只有当确实没有任何周/月/年报数据时才说明数据不足。\n\n"
         f"## 用户健康数据\n{user_context}"
     )
     if archived_summaries and archived_summaries != "暂无历史归档数据":
-        prompt += f"\n\n## 历史饮食归档\n{archived_summaries}"
+        prompt += f"\n\n## 历史饮食归档（周/月/年报，含完整营养数据与AI总结）\n{archived_summaries}"
     return prompt
 
 

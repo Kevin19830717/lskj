@@ -105,8 +105,13 @@ func (r *Router) registerRoutes() {
 			// 营养分析摘要
 			summaries := authed.Group("/summaries")
 			{
-				summaries.POST("/generate", r.summHandler.GenerateSummary) // 手动生成摘要
-				summaries.GET("", r.summHandler.GetSummaries)               // 查看摘要列表
+				summaries.POST("/generate", r.summHandler.GenerateSummary)               // 手动生成摘要
+				summaries.POST("/generate-next", r.summHandler.GenerateNextMissing)      // 生成下一条缺失的摘要
+				summaries.POST("/incremental-backfill", r.summHandler.IncrementalBackfill) // 增量生成报告
+				summaries.GET("", r.summHandler.GetSummaries)                            // 查看摘要列表
+				summaries.DELETE("", r.summHandler.DeleteAllSummaries)                    // 清除全部摘要
+				summaries.DELETE("/:id", r.summHandler.DeleteSummary)                     // 删除指定摘要
+				summaries.PUT("/:id", r.summHandler.UpdateSummary)                        // 更新摘要
 			}
 
 			// AI健康建议（RAG）

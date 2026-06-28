@@ -168,10 +168,18 @@ export interface SummaryInsights {
   total_protein_g?: number
   total_fat_g?: number
   total_carbohydrate_g?: number
+  total_sodium_mg?: number
+  total_cholesterol_mg?: number
+  total_vitamin_c_mg?: number
+  total_calcium_mg?: number
+  total_iron_mg?: number
+  total_potassium_mg?: number
   top_foods?: SummaryFoodFrequency[]
   nutrient_trend?: Record<string, number[]>
   health_score?: number
   recommendations?: string[]
+  ai_summary?: string
+  ai_advice?: string
   [key: string]: unknown
 }
 

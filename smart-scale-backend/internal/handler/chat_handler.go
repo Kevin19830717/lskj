@@ -34,17 +34,34 @@ func (h *ChatHandler) Chat(c *gin.Context) {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"history"`
+		Mode string `json:"mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request: "+err.Error()))
 		return
 	}
 
+	if req.Mode == "" {
+		req.Mode = "fast"
+	}
+	if req.Mode != "fast" && req.Mode != "expert" {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid mode. Must be 'fast' or 'expert'"))
+		return
+	}
+
 	// 组装转发到 RAG service 的请求体
+	history := req.History
+	if history == nil {
+		history = []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}{}
+	}
 	payload := map[string]interface{}{
 		"user_id": userID,
 		"message": req.Message,
-		"history": req.History,
+		"history": history,
+		"mode":    req.Mode,
 	}
 	body, _ := json.Marshal(payload)
 
@@ -92,9 +109,18 @@ func (h *ChatHandler) ChatStream(c *gin.Context) {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"history"`
+		Mode string `json:"mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request: "+err.Error()))
+		return
+	}
+
+	if req.Mode == "" {
+		req.Mode = "fast"
+	}
+	if req.Mode != "fast" && req.Mode != "expert" {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid mode. Must be 'fast' or 'expert'"))
 		return
 	}
 
@@ -102,6 +128,7 @@ func (h *ChatHandler) ChatStream(c *gin.Context) {
 		"user_id": userID,
 		"message": req.Message,
 		"history": req.History,
+		"mode":    req.Mode,
 	}
 	body, _ := json.Marshal(payload)
 
@@ -165,7 +192,7 @@ func (h *ChatHandler) ChatStream(c *gin.Context) {
 func (h *ChatHandler) ChatHistory(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 
-	ragURL := fmt.Sprintf("%s/api/v1/rag/chat/history?user_id=%d&limit=50", h.ragBaseURL, userID)
+	ragURL := fmt.Sprintf("%s/api/v1/rag/chat/history?user_id=%d&limit=100", h.ragBaseURL, userID)
 	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "GET", ragURL, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to create request"))
@@ -199,6 +226,36 @@ func (h *ChatHandler) ResetChat(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 
 	ragURL := fmt.Sprintf("%s/api/v1/rag/chat/reset?user_id=%d", h.ragBaseURL, userID)
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", ragURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to create request"))
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "AI服务暂时不可用"))
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "AI服务响应异常"))
+		return
+	}
+
+	var ragData map[string]interface{}
+	json.Unmarshal(respBody, &ragData)
+	c.JSON(http.StatusOK, model.Success(ragData))
+}
+
+// DeleteLastUserMessage 删除最后一条孤立的 user 消息（前端重发前去重用）
+// POST /api/v1/ai/chat/delete-last-user
+func (h *ChatHandler) DeleteLastUserMessage(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+
+	ragURL := fmt.Sprintf("%s/api/v1/rag/chat/delete-last-user?user_id=%d", h.ragBaseURL, userID)
 	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", ragURL, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to create request"))

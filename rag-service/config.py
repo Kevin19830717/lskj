@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # DashScope API (OpenAI 兼容模式)
     DASHSCOPE_API_KEY: str = ""
-    TEXT_MODEL: str = "qwen3.6-flash"
+    TEXT_MODEL: str = "qwen-plus"
     VL_MODEL: str = "qwen-vl-flash"
     EMBEDDING_MODEL: str = "text-embedding-v2"
 
@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     def responses_url(self) -> str:
         """Responses API — 支持 previous_response_id 多轮记忆"""
         return f"{self.DASHSCOPE_BASE_URL}/responses"
+
+    @property
+    def chat_completions_url(self) -> str:
+        """Chat Completions API — 支持 enable_thinking 深度思考"""
+        return f"{self.DASHSCOPE_BASE_URL}/chat/completions"
 
     @property
     def embeddings_url(self) -> str:

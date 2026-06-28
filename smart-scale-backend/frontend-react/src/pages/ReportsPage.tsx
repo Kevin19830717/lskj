@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { AnimatedDropdown, type DropdownOption } from "@/components/animated-dropdown"
 import { AnimatedNumber } from "@/components/fx"
 import { apiGet, apiPost, apiDelete, type AnalysisSummary } from "@/lib/api"
-import { FileText, Clock, Trash2, RefreshCw, Zap, ChevronLeft, ChevronRight, Trash, X, ChevronsLeft, ChevronsRight, Info, Apple, Lightbulb } from "lucide-react"
+import { FileText, Clock, Trash2, RefreshCw, Zap, ChevronLeft, ChevronRight, Trash, X, ChevronsLeft, ChevronsRight, Info, Apple, Sparkles } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 
 const PAGE_SIZE = 10
@@ -34,11 +34,10 @@ const INSIGHTS_LABELS: Record<string, string> = {
   total_iron_mg: "铁", total_potassium_mg: "钾",
   health_score: "健康评分",
 }
-const HIDDEN_KEYS = new Set(["top_foods", "recommendations", "nutrient_trend", "name"])
 const TAB_ITEMS = [
   { id: "basic", label: "基本信息", icon: Info },
   { id: "foods", label: "常吃食物", icon: Apple },
-  { id: "advice", label: "建议", icon: Lightbulb },
+  { id: "ai", label: "AI总结", icon: Sparkles },
 ] as const
 
 function fmtDate(v?: string) {
@@ -99,13 +98,16 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
     }))
     if (microItems.length > 0) groups.push({ label: "微量元素", items: microItems })
 
-    // 周期（仅非日报显示，黑色，放最后）
+    // 周期（仅非日报显示，黑色，放最后）—— 确保 start <= end
     if (!isDaily) {
+      const ps = typeof v("period_start") === "string" ? v("period_start") as string : ""
+      const pe = typeof v("period_end") === "string" ? v("period_end") as string : ""
+      const [start, end] = ps && pe && ps > pe ? [pe, ps] : [ps, pe]
       groups.push({
         label: "周期",
         items: [
-          { label: "周期开始", value: typeof v("period_start") === "string" ? v("period_start") as string : "", unit: "", color: "#111827" },
-          { label: "周期结束", value: typeof v("period_end") === "string" ? v("period_end") as string : "", unit: "", color: "#111827" },
+          { label: "周期开始", value: start, unit: "", color: "#111827" },
+          { label: "周期结束", value: end, unit: "", color: "#111827" },
         ],
       })
     }
@@ -114,7 +116,6 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
   }, [ins, isDaily, periodDiv, tg])
 
   const topFoods = (ins?.top_foods ?? []) as Array<{ name?: string; name_en?: string; count: number; total_weight_g?: number }>
-  const recommendations = (ins?.recommendations ?? []) as string[]
   const maxCount = Math.max(...topFoods.map(f => f.count), 1)
 
   return (
@@ -131,20 +132,22 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
           </div>
           <button onClick={onClose} className="rounded-full p-2 text-gray-400 hover:bg-gray-100"><X className="h-5 w-5" /></button>
         </div>
-        <div className="px-6 pt-4">
-          <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
-            {TAB_ITEMS.map(tab => {
-              const Icon = tab.icon
-              return (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                  className="relative px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:text-gray-900">
-                  {activeTab === tab.id && <motion.div layoutId="report-detail-tab" className="absolute inset-0 bg-white shadow rounded-lg" transition={{ type: "spring", duration: 0.5 }} />}
-                  <span className="relative z-10 flex items-center gap-1.5"><Icon className="h-4 w-4" />{tab.label}</span>
-                </button>
-              )
-            })}
+        {!isDaily && (
+          <div className="px-6 pt-4">
+            <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+              {TAB_ITEMS.map(tab => {
+                const Icon = tab.icon
+                return (
+                  <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                    className="relative px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:text-gray-900">
+                    {activeTab === tab.id && <motion.div layoutId="report-detail-tab" className="absolute inset-0 bg-white shadow rounded-lg" transition={{ type: "spring", duration: 0.5 }} />}
+                    <span className="relative z-10 flex items-center gap-1.5"><Icon className="h-4 w-4" />{tab.label}</span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
         <div className="p-6 min-h-[380px] relative">
           <AnimatePresence mode="popLayout">
             {/* ===== 基本信息 ===== */}
@@ -183,71 +186,89 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
                     })}
                   </div>
                 )}
-              </motion.div>
-            )}
-
-            {/* ===== 常吃食物 ===== */}
-            {activeTab === "foods" && (
-              <motion.div key="foods" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.25, ease: "easeOut" }}>
-                {topFoods.length === 0 ? <p className="text-gray-400 text-center py-8">暂无数据</p> : (
-                  isDaily ? (
-                    /* 日报：垂直柱状图 */
-                    <div className="flex justify-around items-stretch border-b border-gray-200" style={{ height: "260px", padding: "20px 8px 0" }}>
-                      {topFoods.slice(0, 8).map((f, i) => {
-                        const barPx = Math.max(20, Math.round((f.count / maxCount) * 220))
-                        return (
-                          <div key={`${f.name || f.name_en}-${i}`} className="flex flex-col items-center justify-end" style={{ width: "34px" }}>
-                            <span className="text-[10px] text-gray-400 font-medium leading-none mb-1">{f.count}次</span>
-                            <motion.div
-                              className="rounded-t-md w-full"
-                              style={{ backgroundImage: `linear-gradient(to top, ${tg.to}, ${tg.from})` }}
-                              initial={{ height: 0 }}
-                              animate={{ height: barPx }}
-                              transition={{ duration: 0.5, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] }}
-                            />
-                            <span className="text-[10px] text-gray-600 truncate w-full text-center leading-none mt-1">{(f.name || f.name_en || "").slice(0, 3)}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    /* 周/月/年报：水平进度条 */
-                    <div className="space-y-3">
-                      {topFoods.slice(0, 10).map((f, i) => (
-                        <div key={`${f.name || f.name_en}-${i}`} className="flex items-center gap-3">
-                          <span className="w-6 text-sm font-bold text-gray-400 text-center">{i + 1}</span>
-                          <div className="flex-1">
-                            <div className="flex justify-between text-sm mb-1"><span className="font-medium">{f.name || f.name_en}</span><span className="text-gray-400 text-xs">{f.count}次</span></div>
-                            <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                              <motion.div className="h-full rounded-full"
-                                style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}
-                                initial={{ width: 0 }}
-                                animate={{ width: `${(f.count / maxCount) * 100}%` }}
-                                transition={{ duration: 0.6, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] }} />
-                            </div>
-                          </div>
-                          {f.total_weight_g ? <span className="text-xs text-gray-400 w-12 text-right">{Math.round(f.total_weight_g)}g</span> : null}
-                        </div>
+                {/* 日报：食物统计合并到基本信息页下方 */}
+                {isDaily && topFoods.length > 0 && (
+                  <div className="mt-4">
+                    <h6 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">食物统计</h6>
+                    <div className="flex flex-wrap gap-2">
+                      {topFoods.map((f, i) => (
+                        <span key={`${f.name || f.name_en}-${i}`}
+                          className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium border"
+                          style={{ backgroundColor: tg.bg, borderColor: `${tg.from}40`, color: tg.to }}>
+                          {f.name || f.name_en || "未知"}
+                          <span className="text-gray-400">{f.count}次{f.total_weight_g ? ` · ${Math.round(f.total_weight_g)}g` : ""}</span>
+                        </span>
                       ))}
                     </div>
-                  )
+                  </div>
                 )}
               </motion.div>
             )}
 
-            {/* ===== 建议 ===== */}
-            {activeTab === "advice" && (
-              <motion.div key="advice" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.25, ease: "easeOut" }}>
-                {recommendations.length === 0 ? <p className="text-gray-400 text-center py-8">暂无建议</p> : (
+            {/* ===== 常吃食物（仅非日报显示） ===== */}
+            {!isDaily && activeTab === "foods" && (
+              <motion.div key="foods" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.25, ease: "easeOut" }}>
+                {topFoods.length === 0 ? <p className="text-gray-400 text-center py-8">暂无数据</p> : (
                   <div className="space-y-3">
-                    {recommendations.map((item, idx) => (
-                      <div key={idx} className="flex gap-3 rounded-xl px-4 py-3" style={{ backgroundColor: tg.bg }}>
-                        <span className="flex-shrink-0 w-6 h-6 rounded-full text-white text-xs font-bold flex items-center justify-center" style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}>{idx + 1}</span>
-                        <p className="text-sm text-gray-700">{item}</p>
+                    {topFoods.slice(0, 10).map((f, i) => (
+                      <div key={`${f.name || f.name_en}-${i}`} className="flex items-center gap-3">
+                        <span className="w-6 text-sm font-bold text-gray-400 text-center">{i + 1}</span>
+                        <div className="flex-1">
+                          <div className="flex justify-between text-sm mb-1"><span className="font-medium">{f.name || f.name_en}</span><span className="text-gray-400 text-xs">{f.count}次</span></div>
+                          <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                            <motion.div className="h-full rounded-full"
+                              style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${(f.count / maxCount) * 100}%` }}
+                              transition={{ duration: 0.6, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] }} />
+                          </div>
+                        </div>
+                        {f.total_weight_g ? <span className="text-xs text-gray-400 w-12 text-right">{Math.round(f.total_weight_g)}g</span> : null}
                       </div>
                     ))}
                   </div>
                 )}
+              </motion.div>
+            )}
+
+            {/* ===== AI 总结页（仅非日报显示） ===== */}
+            {!isDaily && activeTab === "ai" && (
+              <motion.div key="ai" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.25, ease: "easeOut" }}>
+                {(() => {
+                  const aiSummary = typeof ins?.ai_summary === "string" ? ins.ai_summary as string : ""
+                  const aiAdvice = typeof ins?.ai_advice === "string" ? ins.ai_advice as string : ""
+                  if (!aiSummary && !aiAdvice) {
+                    return (
+                      <div className="text-center py-8">
+                        <Sparkles className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+                        <p className="text-gray-400 text-sm">尚未生成AI总结</p>
+                        <p className="text-gray-400 text-xs mt-1">点击页面顶部「生成一条」按钮，系统会从近到远依次为每条报告生成AI总结</p>
+                      </div>
+                    )
+                  }
+                  return (
+                    <div className="space-y-4">
+                      {aiSummary && (
+                        <div className="rounded-2xl p-4 border" style={{ backgroundColor: tg.bg, borderColor: `${tg.from}40` }}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <Sparkles className="h-4 w-4" style={{ color: tg.to }} />
+                            <h6 className="text-sm font-semibold" style={{ color: tg.to }}>本期总结</h6>
+                          </div>
+                          <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{aiSummary}</p>
+                        </div>
+                      )}
+                      {aiAdvice && (
+                        <div className="rounded-2xl p-4 border bg-white" style={{ borderColor: `${tg.from}40` }}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <Zap className="h-4 w-4" style={{ color: tg.to }} />
+                            <h6 className="text-sm font-semibold" style={{ color: tg.to }}>下期建议</h6>
+                          </div>
+                          <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{aiAdvice}</p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
               </motion.div>
             )}
           </AnimatePresence>
@@ -300,13 +321,12 @@ export default function ReportsPage() {
   }
 
   const handleClearAll = async () => {
-    const cn = TYPE_TAGS[summaryType]?.label || summaryType
-    if (!confirm(`确定清除全部 ${cn}？只有报告被删除，原始数据不受影响`)) return
+    if (!confirm("确定清除全部周报、月报和年报？日报数据将保留，原始数据不受影响")) return
     setClearing(true)
-    const res = await apiDelete("/summaries")
+    const res = await apiDelete("/summaries?exclude_daily=true")
     if (res.code === 0) {
       const d = res.data as { deleted?: number } | null
-      setFeedback(`已清除 ${d?.deleted ?? "全部"} 条`)
+      setFeedback(`已清除 ${d?.deleted ?? "全部"} 条（周/月/年报）`)
       setPage(1); fetchPage(1, summaryType)
     } else setFeedback("清除失败：" + res.message)
     setClearing(false)
@@ -314,18 +334,14 @@ export default function ReportsPage() {
   }
 
   const handleBackfill = async () => {
-    setBackfilling(true); setFeedback("生成中...")
-    const res = await apiPost<{ daily: number; weekly: number; monthly: number; yearly: number }>("/summaries/incremental-backfill")
-    if (res.code === 0 && res.data) {
-      const d = res.data; const parts: string[] = []
-      if (d.daily > 0) parts.push(`${d.daily}日报`)
-      if (d.weekly > 0) parts.push(`${d.weekly}周报`)
-      if (d.monthly > 0) parts.push(`${d.monthly}月报`)
-      if (d.yearly > 0) parts.push(`${d.yearly}年报`)
-      setFeedback(parts.length ? `已生成：${parts.join("、")}` : "没有新报告")
+    const cn = TYPE_TAGS[summaryType]?.label || summaryType
+    setBackfilling(true); setFeedback(`生成${cn}中...`)
+    const res = await apiPost<unknown>(`/summaries/generate-next?type=${summaryType}`)
+    if (res.code === 0) {
+      setFeedback(res.message ? res.message : `已生成一条${cn}`)
       fetchPage(page, summaryType)
     } else setFeedback("生成失败：" + (res.message || "未知错误"))
-    setBackfilling(false); setTimeout(() => setFeedback(""), 5000)
+    setBackfilling(false); setTimeout(() => setFeedback(""), 4000)
   }
 
   const goPage = (p: number) => { if (p >= 1 && p <= totalPages) { setPage(p); fetchPage(p, summaryType) } }
@@ -335,11 +351,11 @@ export default function ReportsPage() {
       <AnimatedDropdown options={summaryTypeOptions} value={summaryType} onChange={setSummaryType} theme="green" icon={<Clock className="h-4 w-4" />} />
       <button disabled={backfilling} onClick={handleBackfill}
         className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:shadow-md transition disabled:opacity-50">
-        <Zap className={`h-4 w-4 ${backfilling ? "animate-pulse" : ""}`} />{backfilling ? "生成中…" : "一键生成"}
+        <Zap className={`h-4 w-4 ${backfilling ? "animate-pulse" : ""}`} />{backfilling ? "生成中…" : "生成一条"}
       </button>
       <button disabled={clearing} onClick={handleClearAll}
-        className="inline-flex items-center gap-1 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-100 transition disabled:opacity-50" title="清除全部">
-        <Trash className="h-4 w-4" />清除全部
+        className="inline-flex items-center gap-1 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-100 transition disabled:opacity-50" title="清除周报/月报/年报（保留日报）">
+        <Trash className="h-4 w-4" />清除周/月/年报
       </button>
       <button onClick={() => fetchPage(page, summaryType)}
         className="inline-flex items-center gap-1 rounded-xl bg-white/80 border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition" title="刷新">
@@ -422,8 +438,17 @@ export default function ReportsPage() {
                         {/* 删除 — hover 出现 */}
                         <button type="button" disabled={deletingId === s.id}
                           onClick={(e) => handleDelete(s.id, e)}
-                          className="absolute top-2 right-2 rounded-full p-1.5 text-gray-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition-all"
+                          className="absolute top-2 right-2 rounded-full p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100"
                           title="删除"><Trash2 className="h-3.5 w-3.5" /></button>
+
+                        {/* AI总结标记 — 有ai_summary时显示，右下角 */}
+                        {i?.ai_summary && (
+                          <span className="absolute bottom-2 right-2 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white"
+                            style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}
+                            title="已生成AI总结">
+                            <Sparkles className="h-2.5 w-2.5" />AI
+                          </span>
+                        )}
                       </CardContent>
                     </Card>
                   </motion.div>

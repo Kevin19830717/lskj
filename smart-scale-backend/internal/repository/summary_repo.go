@@ -122,6 +122,16 @@ func (r *SummaryRepository) DeleteAllByUser(ctx context.Context, userID int) (in
 	return result.RowsAffected(), nil
 }
 
+// DeleteAllByUserExceptDaily 删除用户除日报外的全部摘要
+func (r *SummaryRepository) DeleteAllByUserExceptDaily(ctx context.Context, userID int) (int64, error) {
+	query := `DELETE FROM user_analysis_summaries WHERE user_id = $1 AND summary_type != 'daily'`
+	result, err := database.Pool.Exec(ctx, query, userID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete summaries except daily: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
+
 // FindLatestByType 获取某类型的最新摘要
 func (r *SummaryRepository) FindLatestByType(ctx context.Context, userID int, summaryType string) (*model.AnalysisSummary, error) {
 	var s model.AnalysisSummary
@@ -330,7 +340,7 @@ func (r *SummaryRepository) GetWeekStartsWithoutWeeklySummary(ctx context.Contex
 		LEFT JOIN user_analysis_summaries s
 			ON s.user_id = $1 AND s.summary_date = d.week_start AND s.summary_type = 'weekly'
 		WHERE s.id IS NULL
-		ORDER BY d.week_start DESC
+		ORDER BY d.week_start ASC
 		LIMIT $3`
 
 	rows, err := database.Pool.Query(ctx, query, userID, since, limit)
@@ -363,7 +373,7 @@ func (r *SummaryRepository) GetMonthStartsWithoutMonthlySummary(ctx context.Cont
 		LEFT JOIN user_analysis_summaries s
 			ON s.user_id = $1 AND s.summary_date = d.month_start AND s.summary_type = 'monthly'
 		WHERE s.id IS NULL
-		ORDER BY d.month_start DESC
+		ORDER BY d.month_start ASC
 		LIMIT $3`
 
 	rows, err := database.Pool.Query(ctx, query, userID, since, limit)
@@ -396,7 +406,7 @@ func (r *SummaryRepository) GetYearStartsWithoutYearlySummary(ctx context.Contex
 		LEFT JOIN user_analysis_summaries s
 			ON s.user_id = $1 AND s.summary_date = d.year_start AND s.summary_type = 'yearly'
 		WHERE s.id IS NULL
-		ORDER BY d.year_start DESC
+		ORDER BY d.year_start ASC
 		LIMIT $3`
 
 	rows, err := database.Pool.Query(ctx, query, userID, since, limit)

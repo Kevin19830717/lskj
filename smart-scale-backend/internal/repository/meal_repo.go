@@ -436,3 +436,46 @@ func (r *MealRepository) GetAllActiveUserIDs(ctx context.Context) ([]int, error)
 	}
 	return userIDs, nil
 }
+
+// UpdateWeighRecord 更新称重记录
+func (r *MealRepository) UpdateWeighRecord(ctx context.Context, id int64, record *model.WeighRecord, newTime *time.Time) error {
+	ingredientsJSON, _ := json.Marshal(record.Ingredients)
+	weightsJSON, _ := json.Marshal(record.RawWeightsG)
+
+	query := `UPDATE weigh_records SET
+		ingredients = $1::jsonb, raw_weights_g = $2::jsonb, cooking_method = $3,
+		cooked_weight_g = $4, cooked_energy_kcal = $5, cooked_protein_g = $6,
+		cooked_fat_g = $7, cooked_carbohydrate_g = $8, cooked_sodium_mg = $9,
+		cooked_cholesterol_mg = $10, cooked_vitamin_c_mg = $11, cooked_calcium_mg = $12,
+		cooked_iron_mg = $13, cooked_potassium_mg = $14`
+	args := []interface{}{
+		ingredientsJSON, weightsJSON, record.CookingMethod,
+		record.CookedWeightG, record.CookedEnergyKcal, record.CookedProteinG,
+		record.CookedFatG, record.CookedCarbohydrateG, record.CookedSodiumMg,
+		record.CookedCholesterolMg, record.CookedVitaminCMg, record.CookedCalciumMg,
+		record.CookedIronMg, record.CookedPotassiumMg,
+	}
+	if newTime != nil {
+		query += `, created_at = $15`
+		args = append(args, *newTime)
+		query += fmt.Sprintf(" WHERE id = $%d", len(args)+1)
+	} else {
+		query += fmt.Sprintf(" WHERE id = $%d", len(args)+1)
+	}
+	args = append(args, id)
+
+	_, err := database.Pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update weigh record: %w", err)
+	}
+	return nil
+}
+
+// DeleteWeighRecord 删除称重记录
+func (r *MealRepository) DeleteWeighRecord(ctx context.Context, id int64) error {
+	_, err := database.Pool.Exec(ctx, "DELETE FROM weigh_records WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete weigh record: %w", err)
+	}
+	return nil
+}

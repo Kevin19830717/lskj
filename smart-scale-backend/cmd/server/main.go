@@ -176,8 +176,8 @@ func setupRoutes(
 	api.POST("/auth/register", authH.Register)
 	api.POST("/auth/login", authH.Login)
 
-	// === 测试接口（免JWT，仅供嵌入式端联调，勿用于生产）===
-	api.POST("/test/weigh-in", mealH.RecordWeighInTest)
+	// === 嵌入式设备数据上报（免认证，user_id 通过 query 传入，比赛演示用）===
+	api.POST("/weigh-in/record", mealH.RecordWeighInTest)
 
 	// === 后台管理（需 X-Admin-Key，在 handler 内校验）===
 	api.POST("/admin/devices", deviceH.Provision)      // 批量预登记设备
@@ -296,6 +296,8 @@ func setupRoutes(
 	// 称重记录
 	protected.POST("/weigh-in", mealH.RecordWeighIn)
 	protected.GET("/records", mealH.GetHistoryRecords)
+	protected.PUT("/records/:id", mealH.UpdateWeighRecord)
+	protected.DELETE("/records/:id", mealH.DeleteWeighRecord)
 	protected.GET("/daily-summary", mealH.GetDailySummary)
 
 	// 食物库
@@ -305,6 +307,7 @@ func setupRoutes(
 
 	// 营养摘要
 	protected.POST("/summaries/generate", summaryH.GenerateSummary)
+	protected.POST("/summaries/generate-next", summaryH.GenerateNextMissing)
 	protected.GET("/summaries", summaryH.GetSummaries)
 	protected.DELETE("/summaries/:id", summaryH.DeleteSummary)
 	protected.DELETE("/summaries", summaryH.DeleteAllSummaries)
@@ -321,6 +324,7 @@ func setupRoutes(
 	protected.POST("/ai/chat/stream", chatH.ChatStream)
 	protected.GET("/ai/chat/history", chatH.ChatHistory)
 	protected.POST("/ai/chat/reset", chatH.ResetChat)
+	protected.POST("/ai/chat/delete-last-user", chatH.DeleteLastUserMessage)
 
 	// 仪表盘
 	protected.GET("/dashboard/stats", dashboardH.GetStats)

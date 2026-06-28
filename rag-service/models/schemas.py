@@ -183,6 +183,7 @@ class ChatRequest(BaseModel):
     user_id: int = Field(..., description="用户ID")
     message: str = Field(..., description="本次用户消息")
     history: List[ChatMessage] = Field(default_factory=list, description="历史对话(不含本次消息)")
+    mode: str = Field("fast", description="对话模式: fast(快速模式,简洁回复) / expert(专家模式,深度思考+详细回复)")
 
 
 class ChatResponse(BaseModel):
