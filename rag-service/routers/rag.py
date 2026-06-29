@@ -389,6 +389,30 @@ async def delete_last_user_message(user_id: int):
         raise HTTPException(status_code=500, detail="删除失败")
 
 
+class SaveInterruptedReq(BaseModel):
+    user_id: int
+    message: str
+    reply: str
+
+@router.post("/chat/save-interrupted", summary="保存中断的对话消息")
+async def save_interrupted(req: SaveInterruptedReq):
+    """用户切页面中断流式时，保存已收到的部分 AI 回复，防止孤立 user 消息"""
+    try:
+        async with get_connection() as conn:
+            await conn.execute(
+                "INSERT INTO chat_messages (user_id, role, content) VALUES ($1, 'user', $2)",
+                req.user_id, req.message,
+            )
+            await conn.execute(
+                "INSERT INTO chat_messages (user_id, role, content) VALUES ($1, 'assistant', $2)",
+                req.user_id, req.reply + " [已中断]",
+            )
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Save interrupted failed for user={req.user_id}: {e}")
+        raise HTTPException(status_code=500, detail="保存失败")
+
+
 @router.post("/chat/stream", summary="AI健康对话(流式)")
 async def chat_stream(req: ChatRequest):
     """

@@ -5,7 +5,8 @@ import remarkGfm from "remark-gfm"
 import AppShell from "@/components/app-shell"
 import { cn } from "@/lib/utils"
 import { apiGet, apiPost } from "@/lib/api"
-import { Send, Sparkles, User, RotateCcw, Brain } from "lucide-react"
+import { Sparkles, User, RotateCcw, Brain } from "lucide-react"
+import { AIInputWithLoading } from "@/components/ai-input-with-loading"
 
 interface ChatMsg {
   role: "user" | "assistant"
@@ -55,7 +56,7 @@ function ThinkingBlock({ thinking, isThinking, done, expert }: { thinking: strin
           />
         </span>
         <span className={cn(isThinking && (expert ? "text-white font-medium" : "text-gray-900 font-medium"))}>
-          {isThinking ? "正在深度思考" : `已深度思考 · 点击${expanded ? "收起" : "展开"}`}
+          {isThinking ? "正在前往信息库查找相关数据" : `已查找完毕 · 点击${expanded ? "收起" : "展开"}`}
         </span>
         {isThinking && (
           <span className="inline-flex items-end gap-[2px] h-3 ml-0.5">
@@ -129,25 +130,17 @@ export default function AIChatPage() {
         const res = await apiGet<{ history: ChatMsg[] }>("/ai/chat/history")
         if (!cancelled && res.code === 0 && res.data?.history?.length) {
           const history = res.data.history
-          // 修复"中途退出留下孤立用户问题"：若最后一条是用户消息且无 AI 回复，自动重发
+          // 若最后一条是孤立的用户消息（中途退出），删除它，不清除上下文让用户手动重问
           const last = history[history.length - 1]
           if (last && last.role === "user") {
-            const question = last.content
-            // 移除这条孤立的用户消息（前端 + 后端），由 send() 重新加入
-            // 否则每次进页面都会再存一条 user 消息，导致重复堆积
             const trimmed = history.slice(0, -1)
             setMessages(trimmed)
             setHistoryLoaded(true)
-            // 调用后端删除最后这条孤立的 user 消息，避免数据库里堆积重复
-            try {
-              await apiPost("/ai/chat/delete-last-user")
-            } catch {
-              // 删除失败不阻塞重发
-            }
-            // 等待下一帧再触发，避免状态竞争
-            setTimeout(() => {
-              if (!cancelled) send(question)
-            }, 50)
+            // 后端删除孤立的用户消息
+            try { await apiPost("/ai/chat/delete-last-user") } catch { /* 忽略 */ }
+            // 不自动重发，追加一条提示让用户手动重新提问
+            trimmed.push({ role: "assistant", content: "⏳ 上次对话中断，请重新发送您的问题。" })
+            setMessages(trimmed)
             return
           }
           setMessages(history)
@@ -196,6 +189,9 @@ export default function AIChatPage() {
     const controller = new AbortController()
     abortRef.current = controller
 
+    let fullText = ""
+    let fullThinking = ""
+
     try {
       const token = localStorage.getItem("token") || ""
       const res = await fetch(`${API_BASE}/ai/chat/stream`, {
@@ -217,8 +213,6 @@ export default function AIChatPage() {
 
       const decoder = new TextDecoder()
       let buffer = ""
-      let fullText = ""
-      let fullThinking = ""
 
       while (true) {
         const { done, value } = await reader.read()
@@ -288,7 +282,15 @@ export default function AIChatPage() {
         }
       }
     } catch (err) {
-      if ((err as Error).name === "AbortError") return
+      if ((err as Error).name === "AbortError") {
+        // 用户切页面中断流式：保存已收到的部分内容，避免数据库出现孤立 user 消息
+        if (fullText) {
+          try {
+            await apiPost("/ai/chat/save-interrupted", { message: content, reply: fullText })
+          } catch { /* 忽略 */ }
+        }
+        return
+      }
       setMessages((prev) => {
         const next = [...prev]
         const last = next[next.length - 1]
@@ -304,13 +306,6 @@ export default function AIChatPage() {
       setThinking(false)
       abortRef.current = null
       inputRef.current?.focus()
-    }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      send()
     }
   }
 
@@ -400,9 +395,16 @@ export default function AIChatPage() {
               key={idx}
               className={cn("flex gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
             >
-              {/* 头像：仅用户显示 */}
+              {/* 头像：仅用户显示，专家模式下翻转为白底紫线 */}
               {msg.role === "user" && (
-                <div className="flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white shadow-[0_4px_14px_rgba(102,126,234,0.4)]">
+                <div
+                  className={cn(
+                    "flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-500 ease-out",
+                    mode === "expert"
+                      ? "bg-white border border-[rgba(200,195,235,0.5)] text-[#667eea] shadow-[0_4px_14px_rgba(102,126,234,0.15)]"
+                      : "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white shadow-[0_4px_14px_rgba(102,126,234,0.4)]"
+                  )}
+                >
                   <User className="w-5 h-5" />
                 </div>
               )}
@@ -448,7 +450,7 @@ export default function AIChatPage() {
                         <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-30", mode === "expert" ? "bg-white" : "bg-gray-900")} />
                         <span className={cn("relative inline-flex rounded-full h-2 w-2", mode === "expert" ? "bg-white" : "bg-gray-900")} />
                       </span>
-                      <span>正在深度思考</span>
+                      <span>正在前往信息库查找相关数据</span>
                       <span className="inline-flex items-end gap-[2px] h-3 ml-0.5">
                         <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", mode === "expert" ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "0ms", height: "40%" }} />
                         <span className={cn("w-[2px] rounded-full animate-[thinkbar_1.2s_ease-in-out_infinite]", mode === "expert" ? "bg-white" : "bg-gray-900")} style={{ animationDelay: "150ms", height: "70%" }} />
@@ -464,7 +466,7 @@ export default function AIChatPage() {
                   ) : (
                     <div className="whitespace-pre-wrap transition-colors duration-500">{msg.content}</div>
                   )}
-                  {/* 流式输出光标：专家模式白色 */}
+                  {/* 流式输出光标 */}
                   {loading && idx === messages.length - 1 && msg.role === "assistant" && msg.content && !thinking && (
                     <span className={cn("inline-block w-[2px] h-4 ml-0.5 animate-pulse align-text-bottom", mode === "expert" ? "bg-white" : "bg-[#667eea]")} />
                   )}
@@ -504,36 +506,15 @@ export default function AIChatPage() {
               title="重置对话"
               className="flex-shrink-0 w-11 h-11 rounded-2xl bg-white/70 backdrop-blur-sm border border-[rgba(200,195,235,0.4)] text-gray-500 hover:text-[#667eea] hover:border-[#667eea]/40 transition-all duration-300 flex items-center justify-center hover:shadow-md"
             >
-              <RotateCcw className="w-4.5 h-4.5" />
+              <RotateCcw className="w-4 h-4" />
             </button>
-            <div className="flex-1 relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-[#667eea]/8 to-[#764ba2]/8 rounded-2xl blur-sm" />
-              <div className="relative flex items-end gap-2 bg-white/85 backdrop-blur-md rounded-2xl border border-[rgba(200,195,235,0.45)] shadow-[0_4px_20px_rgba(102,126,234,0.1)] p-2 pl-4 focus-within:border-[#667eea]/50 focus-within:shadow-[0_4px_24px_rgba(102,126,234,0.18)] transition-all duration-300">
-                <textarea
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="输入你的健康问题... (Enter 发送, Shift+Enter 换行)"
-                  rows={1}
-                  className="flex-1 resize-none bg-transparent text-[14px] text-gray-700 placeholder:text-gray-400 outline-none max-h-32 py-2 leading-relaxed"
-                  style={{ minHeight: "24px" }}
-                />
-                <motion.button
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => send()}
-                  disabled={!input.trim() || loading}
-                  className={cn(
-                    "flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300",
-                    input.trim() && !loading
-                      ? "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white shadow-[0_4px_14px_rgba(102,126,234,0.4)] hover:shadow-[0_6px_20px_rgba(102,126,234,0.55)]"
-                      : "bg-gray-100 text-gray-300 cursor-not-allowed"
-                  )}
-                >
-                  <Send className="w-4 h-4" />
-                </motion.button>
-              </div>
-            </div>
+            <AIInputWithLoading
+              placeholder="输入你的健康问题... (Enter 发送, Shift+Enter 换行)"
+              minHeight={56}
+              maxHeight={150}
+              externalLoading={loading}
+              onSubmit={async (val) => { setInput(val); send(val) }}
+            />
           </div>
           <p className="text-center text-[11px] text-gray-400 mt-2.5">
             AI 助手基于你的饮食数据提供个性化建议 · 仅供健康参考，不替代专业医疗诊断

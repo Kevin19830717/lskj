@@ -186,8 +186,14 @@ func (s *MealService) UpdateWeighRecord(ctx context.Context, id int64, req *mode
 	}
 	var newTime *time.Time
 	if req.CreatedAt != "" {
-		if t, err := time.Parse("2006-01-02T15:04", req.CreatedAt); err == nil {
+		// 先尝试 ISO 8601 / RFC3339，再尝试 datetime-local 格式
+		if t, err := time.Parse(time.RFC3339, req.CreatedAt); err == nil {
 			newTime = &t
+		} else if t, err := time.Parse("2006-01-02T15:04", req.CreatedAt); err == nil {
+			// datetime-local 无时区，按本地时间(UTC+8)解析
+			loc := time.FixedZone("CST", 8*3600)
+			tt := t.In(loc)
+			newTime = &tt
 		}
 	}
 	return s.mealRepo.UpdateWeighRecord(ctx, id, record, newTime)

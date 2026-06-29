@@ -7,6 +7,7 @@ import { apiGet, apiPut, type UserProfile, type CompanionStats } from "@/lib/api
 import { AnimatedNumber } from "@/components/fx"
 import { RecentMealsList } from "@/pages/DashboardPage"
 import { LoaderCircle, Save, User, Sparkles, X, Pencil, Heart, Activity, Award, Utensils, CalendarDays, Flame, ChefHat } from "lucide-react"
+import { WaveLoader } from "@/components/wave-loader"
 
 const goalLabels: Record<string, string> = {
   lose_weight: "减脂", gain_weight: "增重", maintain: "保持体重",
@@ -237,7 +238,7 @@ export default function ProfilePage() {
                 </div>
               </div>
             ) : (
-              <div className="py-8 text-center text-sm text-gray-400">加载中...</div>
+              <div className="py-6 flex justify-center"><WaveLoader bars={4} message="加载中..." /></div>
             )}
 
             {companion?.first_record_date && (

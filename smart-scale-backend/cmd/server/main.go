@@ -325,6 +325,7 @@ func setupRoutes(
 	protected.GET("/ai/chat/history", chatH.ChatHistory)
 	protected.POST("/ai/chat/reset", chatH.ResetChat)
 	protected.POST("/ai/chat/delete-last-user", chatH.DeleteLastUserMessage)
+	protected.POST("/ai/chat/save-interrupted", chatH.SaveInterruptedMessage)
 
 	// 仪表盘
 	protected.GET("/dashboard/stats", dashboardH.GetStats)

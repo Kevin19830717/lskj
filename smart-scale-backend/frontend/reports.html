@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能饮食健康秤 - 营养报告</title>
+    <link rel="stylesheet" href="/css/style-v15.css?v=17">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body data-theme="reports">
+    <nav class="sidebar">
+        <div class="sidebar-header"><span class="logo-icon">🥗</span><h2>智能饮食秤</h2></div>
+        <ul class="nav-menu">
+            <li><a href="/dashboard"><span>📊</span> 仪表盘</a></li>
+            <li><a href="/records"><span>📝</span> 历史记录</a></li>
+            <li class="active"><a href="/reports"><span>📋</span> 营养报告</a></li>
+            <li><a href="/foods"><span>🍽️</span> 食物库</a></li>
+            <li><a href="/profile" id="profilePageLink"><span>👤</span> 个人中心</a></li>
+        </ul>
+        <div class="sidebar-user-area" id="sidebarUserArea">
+            <div class="sidebar-user-row">
+                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='/profile'">
+                    <span id="avatarLetter">?</span></div>
+                <div class="sidebar-logout-area">
+                    <a href="javascript:void(0)" onclick="logout()" class="logout-btn-pill">退出登录</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="main-panel">
+            <header class="top-bar">
+            <h3>📋 营养分析报告</h3>
+            <div class="toolbar-inline">
+                <div class="custom-select-wrapper">
+                    <select id="summaryType" onchange="loadSummaries()">
+                        <option value="weekly">📅 周报</option>
+                        <option value="daily">📄 日报</option>
+                        <option value="monthly">📆 月报</option>
+                        <option value="yearly">📊 年报</option>
+                    </select>
+                </div>
+                <button onclick="generateSummary()" class="btn btn-primary btn-sm">✨ 生成报告</button>
+            </div>
+        </header>
+
+        <!-- 摘要列表 -->
+        <section class="card reports-list-section">
+            <h4>历史报告</h4>
+            <div id="summariesList" class="summaries-list">
+                <p class="empty-text">加载中...</p>
+            </div>
+        </section>
+
+        <!-- 报告详情模态框 -->
+        <div id="reportModal" class="modal hidden">
+            <div class="modal-content large">
+                <button onclick="closeModal()" class="modal-close">&times;</button>
+                <h4 id="reportTitle">报告详情</h4>
+                <div id="reportBody"></div>
+            </div>
+        </div>
+        </div><!-- end main-panel -->
+    </main>
+
+    <script src="/js/app.js?v=13"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAuth(); loadSummaries();
+        });
+
+        function loadSummaries() {
+            const type = document.getElementById('summaryType').value;
+            apiGet(`/summaries?type=${type}&limit=20`).then(res => {
+                const el = document.getElementById('summariesList');
+                if (!res.data || !res.data.length) { el.innerHTML='<p class="empty-text">暂无报告</p>'; return; }
+                el.innerHTML = res.data.map(s => `
+                    <div class="summary-card" onclick="showReportDetail(${JSON.stringify(s).replace(/"/g,'&quot;')})">
+                        <div class="summary-header-row">
+                            <strong>${s.summary_type}</strong>
+                            <span class="date">${s.summary_date ? s.summary_date.split('T')[0] : '-'}</span>
+                            <span class="badge">${s.source}</span>
+                        </div>
+                        ${renderSummaryPreview(s.insights)}
+                    </div>`).join('');
+            });
+        }
+
+        function renderSummaryPreview(insights) {
+            if (!insights) return '';
+            let html = '<div class="summary-preview">';
+            const show = (label, key, unit='') => {
+                const v = insights[key];
+                if (v != null && v !== undefined && v !== 0) html += `<span><b>${label}:</b>${typeof v==='number'?v.toFixed(1):v}${unit}</span>`;
+            };
+            show('总热量','total_energy_kcal','kcal');
+            show('日均热量','avg_daily_energy_kcal','kcal');
+            show('餐次','total_meals','次');
+            show('蛋白','total_protein_g','g');
+            show('脂肪','total_fat_g','g');
+            show('碳水','total_carbohydrate_g','g');
+            if (insights.top_foods && insights.top_foods.length) {
+                html += `<br><span><b>常吃:</b>${insights.top_foods.slice(0,5).map(f=>f.name_en||f.name).join(', ')}</span>`;
+            }
+            if (insights.recommendations && insights.recommendations.length) {
+                html += `<br><span class="rec-text">${insights.recommendations[0]}</span>`;
+            }
+            html += '</div>';
+            return html;
+        }
+
+        function showReportDetail(s) {
+            document.getElementById('reportTitle').textContent =
+                `${s.summary_type}报告 - ${s.summary_date ? s.summary_date.split('T')[0] : ''}`;
+            document.getElementById('reportBody').innerHTML = renderFullReport(s.insights);
+            document.getElementById('reportModal').classList.remove('hidden');
+        }
+
+        function renderFullReport(insights) {
+            if (!insights) return '<p>暂无数据</p>';
+            let h = `<div class="full-report"><h5>基本信息</h5><table class="mini-table">`;
+            for (const [k,v] of Object.entries(insights)) {
+                if (k === 'top_foods' || k === 'recommendations' || k === 'nutrient_trend') continue;
+                h += `<tr><td>${k}</td><td>${typeof v === 'object' ? JSON.stringify(v, null, 2) : v}</td></tr>`;
+            }
+            h += `</table>`;
+
+            if (insights.top_foods?.length) {
+                h += `<h5>常吃食物排行</h5><table class="mini-table"><tr><th>食物</th><th>次数</th><th>总重量(g)</th></tr>`;
+                insights.top_foods.forEach(f => {
+                    h += `<tr><td>${f.name_en||f.name}</td><td>${f.count}</td><td>${Math.round(f.total_weight_g)}</td></tr>`;
+                });
+                h += `</table>`;
+            }
+
+            if (insights.recommendations?.length) {
+                h += `<h5>建议</h5><ul>`;
+                insights.recommendations.forEach(r => h += `<li>${r}</li>`);
+                h += `</ul>`;
+            }
+            h += `</div>`;
+            return h;
+        }
+
+        function closeModal() { document.getElementById('reportModal').classList.add('hidden'); }
+
+        function generateSummary() {
+            const type = document.getElementById('summaryType').value;
+            btnLoading(event.target, true);
+            apiPost(`/summaries/generate?type=${type}`).then(() => {
+                btnLoading(event.target, false);
+                alert(`${type}报告生成成功！`);
+                loadSummaries();
+            }).catch(e => { btnLoading(event.target, false); alert(e.message); });
+        }
+    </script>
+</body>
+</html>

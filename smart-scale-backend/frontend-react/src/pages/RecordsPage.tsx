@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { motion, AnimatePresence } from "framer-motion"
 import { JollyDateRangePicker } from "@/components/ui/date-range-picker"
 import { ClipboardList, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils, Pencil, Trash2 } from "lucide-react"
+import { WaveLoader } from "@/components/wave-loader"
 
 // ============================================================
 // 工具函数
@@ -204,6 +205,12 @@ export default function RecordsPage() {
   const [editFat, setEditFat] = useState("")
   const [editCarb, setEditCarb] = useState("")
   const [editWeight, setEditWeight] = useState("")
+  const [editSodium, setEditSodium] = useState("")
+  const [editCholesterol, setEditCholesterol] = useState("")
+  const [editVitC, setEditVitC] = useState("")
+  const [editCalcium, setEditCalcium] = useState("")
+  const [editIron, setEditIron] = useState("")
+  const [editPotassium, setEditPotassium] = useState("")
   const [savingRecordId, setSavingRecordId] = useState<number | null>(null)
   const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null)
 
@@ -215,7 +222,7 @@ export default function RecordsPage() {
     setLoading(true)
     const params = new URLSearchParams({
       page: String(currentPage),
-      page_size: "15",
+      page_size: "12",
     })
     if (startDate) params.set("start_date", startDate)
     if (endDate) params.set("end_date", endDate)
@@ -250,7 +257,7 @@ export default function RecordsPage() {
   }, [items, searchQuery])
 
   const refreshRecords = () => {
-    const params = new URLSearchParams({ page: String(currentPage), page_size: "15" })
+    const params = new URLSearchParams({ page: String(currentPage), page_size: "12" })
     if (startDate) params.set("start_date", startDate)
     if (endDate) params.set("end_date", endDate)
     setLoading(true)
@@ -272,6 +279,13 @@ export default function RecordsPage() {
     setEditFat(r.cooked_fat_g != null ? String(r.cooked_fat_g) : "")
     setEditCarb(r.cooked_carbohydrate_g != null ? String(r.cooked_carbohydrate_g) : "")
     setEditWeight(r.cooked_weight_g != null ? String(Math.round(r.cooked_weight_g)) : "")
+    // 详细营养素
+    setEditSodium(r.cooked_sodium_mg != null ? String(r.cooked_sodium_mg) : "")
+    setEditCholesterol(r.cooked_cholesterol_mg != null ? String(r.cooked_cholesterol_mg) : "")
+    setEditVitC(r.cooked_vitamin_c_mg != null ? String(r.cooked_vitamin_c_mg) : "")
+    setEditCalcium(r.cooked_calcium_mg != null ? String(r.cooked_calcium_mg) : "")
+    setEditIron(r.cooked_iron_mg != null ? String(r.cooked_iron_mg) : "")
+    setEditPotassium(r.cooked_potassium_mg != null ? String(r.cooked_potassium_mg) : "")
   }
 
   const handleSaveRecord = async () => {
@@ -279,7 +293,12 @@ export default function RecordsPage() {
     setSavingRecordId(editingRecord.id)
     const ingredients = editItems.map(it => it.name).filter(Boolean)
     const rawWeights = editItems.map(it => parseFloat(it.weight) || 0)
-    // 同时发送 created_at 让后端更新
+    // datetime-local 是本地时间，转成 ISO 格式避免 UTC 偏移 bug
+    let createdAtISO: string | undefined
+    if (editDateTime) {
+      const d = new Date(editDateTime)
+      if (!isNaN(d.getTime())) createdAtISO = d.toISOString()
+    }
     const res = await apiPut(`/records/${editingRecord.id}`, {
       ingredients,
       raw_weights_g: rawWeights,
@@ -289,7 +308,13 @@ export default function RecordsPage() {
       cooked_protein_g: parseFloat(editProtein) || 0,
       cooked_fat_g: parseFloat(editFat) || 0,
       cooked_carbohydrate_g: parseFloat(editCarb) || 0,
-      created_at: editDateTime || undefined,
+      cooked_sodium_mg: parseFloat(editSodium) || 0,
+      cooked_cholesterol_mg: parseFloat(editCholesterol) || 0,
+      cooked_vitamin_c_mg: parseFloat(editVitC) || 0,
+      cooked_calcium_mg: parseFloat(editCalcium) || 0,
+      cooked_iron_mg: parseFloat(editIron) || 0,
+      cooked_potassium_mg: parseFloat(editPotassium) || 0,
+      created_at: createdAtISO || undefined,
     })
     if (res.code === 0) {
       setEditingRecord(null)
@@ -427,7 +452,7 @@ export default function RecordsPage() {
           {/* 列表 — 每条记录独立容器，详情紧跟其后 */}
           <div className="divide-y divide-gray-100">
             {loading && (
-              <div className="px-4 py-10 text-center text-gray-400">加载中...</div>
+              <div className="px-4 py-8 flex justify-center"><WaveLoader bars={4} message="加载中..." /></div>
             )}
             {!loading && filteredItems.length === 0 && (
               <div className="px-4 py-10 text-center text-gray-400">暂无记录</div>
@@ -529,26 +554,58 @@ export default function RecordsPage() {
         </CardContent>
       </Card>
 
-      {/* 编辑称重记录弹窗 */}
+      {/* 编辑称重记录弹窗 — 浅紫色毛玻璃背景，匹配右侧内容区 */}
       {editingRecord && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4" onClick={() => setEditingRecord(null)}>
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">编辑称重记录</h3>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" onClick={() => setEditingRecord(null)}>
+          <div
+            className="w-full max-w-lg rounded-2xl p-6 shadow-2xl max-h-[85vh] overflow-y-auto relative"
+            style={{
+              background: "linear-gradient(135deg, rgba(200,210,255,0.95) 0%, rgba(220,215,248,0.95) 50%, rgba(235,230,252,0.95) 100%)",
+              backdropFilter: "blur(20px)",
+              border: "1px solid rgba(200,195,235,0.5)",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* 右上角 X 关闭按钮 */}
+            <button
+              type="button"
+              onClick={() => setEditingRecord(null)}
+              className="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full bg-[#667eea]/15 hover:bg-[#667eea]/25 text-[#5a5fcf] text-sm leading-none transition font-bold"
+              title="关闭"
+            >
+              ✕
+            </button>
+
+            <h3 className="text-lg font-semibold text-[#4540a0] mb-4">编辑称重记录</h3>
+
             <div className="space-y-3">
-              {/* 用餐时间 */}
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">用餐时间</label>
-                <input type="datetime-local" value={editDateTime}
-                  onChange={e => setEditDateTime(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20" />
+              {/* 第一行：用餐时间(左大部) + 烹饪方式(右小格) */}
+              <div className="flex items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">用餐时间</label>
+                  <input type="datetime-local" value={editDateTime}
+                    onChange={e => setEditDateTime(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20" />
+                </div>
+                <div className="w-[120px] flex-shrink-0">
+                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">烹饪方式</label>
+                  <select value={editCookingMethod} onChange={e => setEditCookingMethod(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 text-gray-800 px-2.5 py-2.5 text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20">
+                    <option value="">未选择</option>
+                    <option value="boil">煮</option><option value="steam">蒸</option>
+                    <option value="stir_fry">炒</option><option value="braise">炖</option>
+                    <option value="roast">烤</option><option value="pan_fry">煎</option>
+                    <option value="deep_fry">炸</option>
+                  </select>
+                </div>
               </div>
 
               {/* 食材逐行编辑 */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-gray-500">食材明细</label>
+                  <label className="text-xs font-medium text-[#5a5fcf]">食材明细</label>
                   <button type="button" onClick={() => setEditItems([...editItems, { name: "", weight: "" }])}
-                    className="text-xs text-[#667eea] hover:underline">+ 添加食材</button>
+                    className="text-xs text-[#667eea] hover:underline font-medium">+ 添加食材</button>
                 </div>
                 <div className="space-y-2">
                   {editItems.map((item, i) => (
@@ -559,70 +616,92 @@ export default function RecordsPage() {
                           next[i] = { ...next[i], name: e.target.value }
                           setEditItems(next)
                         }}
-                        className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                        className="flex-1 rounded-lg border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                       <input type="number" value={item.weight} placeholder="克数"
                         onChange={e => {
                           const next = [...editItems]
                           next[i] = { ...next[i], weight: e.target.value }
                           setEditItems(next)
                         }}
-                        className="w-20 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                        className="w-20 rounded-lg border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                       <span className="text-xs text-gray-400">g</span>
                       {editItems.length > 1 && (
                         <button type="button" onClick={() => setEditItems(editItems.filter((_, j) => j !== i))}
-                          className="text-gray-300 hover:text-red-400 text-lg leading-none">&times;</button>
+                          className="text-gray-400 hover:text-red-400 text-lg leading-none">&times;</button>
                       )}
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* 烹饪方式 */}
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">烹饪方式</label>
-                <select value={editCookingMethod} onChange={e => setEditCookingMethod(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]">
-                  <option value="">未选择</option>
-                  <option value="boil">煮</option><option value="steam">蒸</option>
-                  <option value="stir_fry">炒</option><option value="braise">炖</option>
-                  <option value="roast">烤</option><option value="pan_fry">煎</option>
-                  <option value="deep_fry">炸</option>
-                </select>
-              </div>
-
               {/* 营养数据 */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">熟重 (g)</label>
+                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">熟重 (g)</label>
                   <input type="number" value={editWeight} onChange={e => setEditWeight(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">热量 (kcal)</label>
+                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">热量 (kcal)</label>
                   <input type="number" value={editEnergy} onChange={e => setEditEnergy(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">蛋白质 (g)</label>
+                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">蛋白质 (g)</label>
                   <input type="number" value={editProtein} onChange={e => setEditProtein(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">脂肪 (g)</label>
+                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">脂肪 (g)</label>
                   <input type="number" value={editFat} onChange={e => setEditFat(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">碳水 (g)</label>
+                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">碳水 (g)</label>
                   <input type="number" value={editCarb} onChange={e => setEditCarb(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#667eea]" />
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
+                </div>
+                {/* 详细营养素 */}
+                <div>
+                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">钠 (mg)</label>
+                  <input type="number" value={editSodium} onChange={e => setEditSodium(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">胆固醇 (mg)</label>
+                  <input type="number" value={editCholesterol} onChange={e => setEditCholesterol(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">维生素C (mg)</label>
+                  <input type="number" value={editVitC} onChange={e => setEditVitC(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">钙 (mg)</label>
+                  <input type="number" value={editCalcium} onChange={e => setEditCalcium(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">铁 (mg)</label>
+                  <input type="number" value={editIron} onChange={e => setEditIron(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">钾 (mg)</label>
+                  <input type="number" value={editPotassium} onChange={e => setEditPotassium(e.target.value)}
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
               </div>
             </div>
+
             <div className="flex justify-end gap-3 mt-5">
-              <button onClick={() => setEditingRecord(null)} className="px-4 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100 transition">取消</button>
+              <button onClick={() => setEditingRecord(null)}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-[#5a5fcf] bg-white/60 hover:bg-white/90 transition border border-[#c8c3eb]">
+                取消
+              </button>
               <button onClick={handleSaveRecord} disabled={savingRecordId === editingRecord.id}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:shadow-md transition disabled:opacity-50">
+                className="px-4 py-2 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:shadow-lg hover:shadow-[#667eea]/30 transition disabled:opacity-50">
                 {savingRecordId === editingRecord.id ? "保存中..." : "保存"}
               </button>
             </div>

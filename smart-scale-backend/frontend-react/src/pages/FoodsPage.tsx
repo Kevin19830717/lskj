@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { apiGet, type Food, type FoodSearchResult } from "@/lib/api"
 import { Search, UtensilsCrossed, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { WaveLoader } from "@/components/wave-loader"
 import { motion, AnimatePresence } from "framer-motion"
 import { LiquidGlassButton } from "@/components/liquid-glass-button"
 
@@ -204,7 +205,7 @@ export default function FoodsPage() {
       </div>
 
       {loading ? (
-        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">加载中...</CardContent></Card>
+        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-8 flex justify-center"><WaveLoader bars={4} message="加载中..." /></CardContent></Card>
       ) : visible.length === 0 ? (
         <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">未找到食物</CardContent></Card>
       ) : (

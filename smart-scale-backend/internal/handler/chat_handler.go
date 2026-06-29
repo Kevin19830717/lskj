@@ -250,6 +250,53 @@ func (h *ChatHandler) ResetChat(c *gin.Context) {
 	c.JSON(http.StatusOK, model.Success(ragData))
 }
 
+// SaveInterruptedMessage 保存中断的对话消息
+// POST /api/v1/ai/chat/save-interrupted
+func (h *ChatHandler) SaveInterruptedMessage(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+
+	var req struct {
+		Message string `json:"message"`
+		Reply   string `json:"reply"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request"))
+		return
+	}
+
+	payload := map[string]interface{}{
+		"user_id": userID,
+		"message": req.Message,
+		"reply":   req.Reply,
+	}
+	body, _ := json.Marshal(payload)
+
+	ragURL := h.ragBaseURL + "/api/v1/rag/chat/save-interrupted"
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", ragURL, bytes.NewReader(body))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to create request"))
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "AI服务暂时不可用"))
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "AI服务响应异常"))
+		return
+	}
+
+	var ragData map[string]interface{}
+	json.Unmarshal(respBody, &ragData)
+	c.JSON(http.StatusOK, model.Success(ragData))
+}
+
 // DeleteLastUserMessage 删除最后一条孤立的 user 消息（前端重发前去重用）
 // POST /api/v1/ai/chat/delete-last-user
 func (h *ChatHandler) DeleteLastUserMessage(c *gin.Context) {

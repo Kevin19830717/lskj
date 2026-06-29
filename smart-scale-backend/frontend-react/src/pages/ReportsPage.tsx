@@ -6,6 +6,7 @@ import { AnimatedDropdown, type DropdownOption } from "@/components/animated-dro
 import { AnimatedNumber } from "@/components/fx"
 import { apiGet, apiPost, apiDelete, type AnalysisSummary } from "@/lib/api"
 import { FileText, Clock, Trash2, RefreshCw, Zap, ChevronLeft, ChevronRight, Trash, X, ChevronsLeft, ChevronsRight, Info, Apple, Sparkles } from "lucide-react"
+import { WaveLoader } from "@/components/wave-loader"
 import { motion, AnimatePresence } from "framer-motion"
 
 const PAGE_SIZE = 10
@@ -375,7 +376,7 @@ export default function ReportsPage() {
       </div>
 
       {loading ? (
-        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">加载中...</CardContent></Card>
+        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-8 flex justify-center"><WaveLoader bars={4} message="加载中..." /></CardContent></Card>
       ) : summaries.length === 0 ? (
         <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">暂无报告，点击「一键生成」开始</CardContent></Card>
       ) : (

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能饮食健康秤 - 食物库</title>
+    <link rel="stylesheet" href="/css/style-v15.css?v=17">
+    <style>
+        /* 食物库增强样式 */
+        .foods-grid {
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)) !important;
+            gap: 20px !important;
+        }
+        .food-card {
+            padding: 24px !important;
+            cursor: pointer;
+            border: 2px solid transparent !important;
+            transition: opacity 0.5s ease, transform 0.5s ease !important;
+        }
+        .food-card.card-hidden {
+            opacity: 0 !important;
+            transform: translateY(30px) !important;
+        }
+        .food-card.card-reveal {
+            opacity: 1 !important;
+            transform: translateY(0) !important;
+        }
+        .food-card:hover {
+            transform: translateY(-4px) !important;
+            box-shadow: 0 8px 30px rgba(102,126,234,0.18) !important;
+            border-color: #667eea !important;
+        }
+        /* 卡片头部：名称 + 分类 */
+        .food-card-header {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            margin-bottom: 14px; border-bottom: 1px solid #f0f0f0; padding-bottom: 12px;
+        }
+        .food-card-header h5 { font-size: 19px !important; margin-bottom: 2px !important; color: #222 !important; }
+        .food-card-header h5 small { color: #888 !important; font-size: 13px !important; }
+        .cat-tag {
+            background: linear-gradient(135deg, #667eea, #764ba2); color: white;
+            padding: 4px 12px; border-radius: 14px; font-size: 11px; font-weight: 600;
+            white-space: nowrap; letter-spacing: 0.5px;
+        }
+
+        /* 营养数据区域 */
+        .food-nutrient-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+            margin-top: 12px;
+        }
+        .nutrient-item {
+            display: flex; align-items: center; gap: 6px;
+            background: #f8f9ff; padding: 8px 12px; border-radius: 8px;
+        }
+        .nutrient-icon { font-size: 16px; width: 22px; text-align: center; }
+        .nutrient-info {}
+        .nutrient-label { font-size: 11px; color: #888; display: block; line-height: 1; }
+        .nutrient-value { font-size: 16px; font-weight: 700; color: #333; }
+
+        /* 详情模态框 */
+        .modal-content.large { max-width: 960px !important; width: 92vw !important; }
+        .detail-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #EEEDF9;
+        }
+        .detail-name { font-size: 24px; font-weight: 700; color: #333; }
+        .detail-name small { display: block; font-size: 14px; color: #999; font-weight: 400; margin-top: 2px; }
+        .detail-cat-badge {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; padding: 6px 16px; border-radius: 16px; font-size: 13px; font-weight: 600;
+        }
+
+        /* 核心4项营养素 —— 横向一行排列 */
+        .detail-nutrients {
+            display: flex !important;
+            flex-direction: row !important;
+            gap: 14px !important;
+            margin-bottom: 18px !important;
+            flex-wrap: nowrap !important;
+        }
+        .detail-nutrient-card {
+            flex: 1 1 0;
+            min-width: 0;
+            background: linear-gradient(135deg, #f8f9ff, #f0f2ff);
+            padding: 18px 12px !important;
+            border-radius: 12px; text-align: center;
+        }
+        .detail-nutrient-card .icon { font-size: 28px; margin-bottom: 6px; }
+        .detail-nutrient-card .val { font-size: 22px; font-weight: 800; color: #5a4fbf; }
+        .detail-nutrient-card .label { font-size: 12px; color: #888; margin-top: 2px; }
+
+        /* 详细营养表格 */
+        .detail-full-table { width: 100%; margin-top: 8px; border-collapse: separate; border-spacing: 0; }
+        .detail-full-table thead th { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 10px 16px; font-size: 13px; }
+        .detail-full-table thead th:first-child { border-radius: 8px 0 0 0; }
+        .detail-full-table thead th:last-child { border-radius: 0 8px 0 0; }
+        .detail-full-table tbody td { padding: 10px 20px; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
+
+        /* 搜索区增强 */
+        .search-bar input { min-width: 320px !important; font-size: 15px !important; }
+        .category-filter {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
+        }
+        .category-btn {
+            padding: 6px 16px; border: 2px solid #e0e0e0; border-radius: 20px;
+            background: white; cursor: pointer; font-size: 13px; font-weight: 500;
+            transition: all 0.2s ease; color: #555;
+        }
+        .category-btn:hover { border-color: #667eea; color: #667eea; }
+        .category-btn.active { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-color: transparent; }
+        .result-count { color: #888; font-size: 14px; margin-bottom: 12px; }
+    </style>
+</head>
+<body data-theme="foods">
+    <nav class="sidebar">
+        <div class="sidebar-header"><span class="logo-icon">🥗</span><h2>智能饮食秤</h2></div>
+        <ul class="nav-menu">
+            <li><a href="/dashboard"><span>📊</span> 仪表盘</a></li>
+            <li><a href="/records"><span>📝</span> 历史记录</a></li>
+            <li><a href="/reports"><span>📋</span> 营养报告</a></li>
+            <li class="active"><a href="/foods"><span>🍽️</span> 食物库</a></li>
+            <li><a href="/profile" id="profilePageLink"><span>👤</span> 个人中心</a></li>
+        </ul>
+        <div class="sidebar-user-area" id="sidebarUserArea">
+            <div class="sidebar-user-row">
+                <div class="user-avatar-circle" id="userAvatarCircle" onclick="window.location.href='/profile'">
+                    <span id="avatarLetter">?</span></div>
+                <div class="sidebar-logout-area">
+                    <a href="javascript:void(0)" onclick="logout()" class="logout-btn-pill">退出登录</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="main-panel">
+        <header class="top-bar">
+            <div>
+                <h3 style="margin-bottom:4px;">🍽️ 食物营养库</h3>
+                <p id="resultCount" class="result-count">加载中...</p>
+            </div>
+            <div class="search-bar">
+                <input type="text" id="searchInput" placeholder="搜索食物（中文名/英文名）..." onkeyup="if(event.key==='Enter')searchFoods()">
+                <button onclick="searchFoods()" class="btn btn-primary btn-sm">搜索</button>
+                <button onclick="loadAllFoods()" class="btn btn-secondary btn-sm">显示全部</button>
+            </div>
+        </header>
+
+        <!-- 分类筛选 -->
+        <div id="categoryFilter" class="category-filter"></div>
+
+        <!-- 食物卡片网格 -->
+        <section class="foods-grid-section">
+            <div id="foodsGrid" class="foods-grid">
+                <p class="empty-text">加载中...</p>
+            </div>
+        </section>
+
+        <!-- 食物详情模态框 -->
+        <div id="foodModal" class="modal hidden">
+            <div class="modal-content large">
+                <button onclick="closeFoodModal()" class="modal-close">&times;</button>
+                <div id="foodDetailBody"></div>
+            </div>
+        </div>
+        </div><!-- end main-panel -->
+    </main>
+
+    <script src="/js/app.js?v=13"></script>
+    <script>
+        let allFoods = [];
+        let currentCategory = 'all';
+
+        const categoryMap = {
+            'fruit': '🍎 水果', 'meat': '🥩 肉类', 'vegetable': '🥬 蔬菜',
+            'egg': '🥚 蛋类', 'tofu': '🫘 豆制品', 'seafood': '🦐 海鲜',
+            'grain': '🌾 主食', 'dairy': '🥛 乳制品', 'other': '📦 其他'
+        };
+        const nutrientIcons = { energy_kcal: '🔥', protein_g: '💪', fat_g: '🧈', carbohydrate_g: '🍚',
+            sodium_mg: '🧂', cholesterol_mg: '🩸', vitamin_c_mg: '🍋', calcium_mg: '🦴', iron_mg: '⚡', potassium_mg: '🫀' };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAuth(); loadAllFoods();
+        });
+
+        function loadAllFoods() {
+            apiGet('/foods?page=1&page_size=200').then(res => {
+                allFoods = res.data?.items || [];
+                renderCategoryFilter();
+                renderFoodCards(allFoods);
+                currentCategory = 'all';
+                updateCategoryUI();
+            }).catch(err => {
+                console.error('加载食物列表失败:', err);
+                document.getElementById('foodsGrid').innerHTML = '<p class="empty-text">加载食物数据失败，请刷新重试</p>';
+            });
+        }
+
+        function searchFoods() {
+            const q = document.getElementById('searchInput').value.trim();
+            if (!q) { filterByCategory('all'); return; }
+            apiGet(`/foods/search?query=${encodeURIComponent(q)}&limit=200`)
+               .then(res => {
+                   allFoods = res.data?.items || res.data || [];
+                   renderFoodCards(allFoods);
+                   currentCategory = 'all';
+                   updateCategoryUI();
+                   document.getElementById('resultCount').textContent =
+                       `搜索 "${q}" 找到 ${allFoods.length} 种食物`;
+               });
+        }
+
+        function renderCategoryFilter() {
+            const cats = [...new Set(allFoods.map(f => f.category).filter(Boolean))];
+            const el = document.getElementById('categoryFilter');
+            el.innerHTML = `<button class="category-btn active" onclick="filterByCategory('all')">全部 (${allFoods.length})</button>` +
+                cats.map(c => `<button class="category-btn" data-cat="${c}" onclick="filterByCategory('${c}')">${categoryMap[c] || c} (${allFoods.filter(f=>f.category===c).length})</button>`).join('');
+        }
+
+        function filterByCategory(cat) {
+            currentCategory = cat;
+            updateCategoryUI();
+            const filtered = cat === 'all' ? allFoods : allFoods.filter(f => f.category === cat);
+            renderFoodCards(filtered);
+        }
+
+        function updateCategoryUI() {
+            document.querySelectorAll('.category-btn').forEach(btn => {
+                btn.classList.toggle('active', (currentCategory === 'all' && !btn.dataset.cat) ||
+                    (btn.dataset.cat === currentCategory));
+            });
+        }
+
+        function renderFoodCards(items) {
+            const el = document.getElementById('foodsGrid');
+            if (!items.length) { el.innerHTML='<p class="empty-text">未找到食物</p>'; return; }
+            document.getElementById('resultCount').textContent =
+                currentCategory === 'all' ? `共 ${items.length} 种食物` :
+                `${categoryMap[currentCategory]||currentCategory}: ${items.length} 种食物`;
+
+            // 渲染所有卡片（初始隐藏）
+            el.innerHTML = items.map((f, i) => `
+                <div class="food-card card-hidden" onclick="showFoodDetail(${f.id})" data-card-index="${i}">
+                    <div class="food-card-header">
+                        <div>
+                            <h5>${f.name}<small>${f.name_en}</small></h5>
+                        </div>
+                        ${f.category ? `<span class="cat-tag">${categoryMap[f.category] || f.category}</span>` : ''}
+                    </div>
+                    <div class="food-nutrient-grid">
+                        ${renderNutrientItem('🔥', '能量', f.energy_kcal, 'kcal')}
+                        ${renderNutrientItem('💪', '蛋白质', f.protein_g, 'g')}
+                        ${renderNutrientItem('🧈', '脂肪', f.fat_g, 'g')}
+                        ${renderNutrientItem('🍚', '碳水', f.carbohydrate_g, 'g')}
+                    </div>
+                </div>`).join('');
+
+            // 逐张卡片依次出现
+            requestAnimationFrame(() => {
+                const cards = el.querySelectorAll('.card-hidden');
+                cards.forEach((card, i) => {
+                    setTimeout(() => {
+                        card.classList.remove('card-hidden');
+                        card.classList.add('card-reveal');
+                    }, i * 80);
+                });
+            });
+        }
+
+        function renderNutrientItem(icon, label, val, unit) {
+            if (val == null || val <= 0) return '<div></div>';
+            return `<div class="nutrient-item">
+                <span class="nutrient-icon">${icon}</span>
+                <div class="nutrient-info">
+                    <span class="nutrient-label">${label}</span>
+                    <span class="nutrient-value">${typeof val==='number'?val.toFixed(1):val}${unit}</span>
+                </div>
+            </div>`;
+        }
+
+        function showFoodDetail(id) {
+            apiGet(`/foods?id=${id}`).then(res => {
+                const f = res.data;
+                const mainNutrients = [
+                    ['energy_kcal', '能量', 'kcal', '🔥'], ['protein_g', '蛋白质', 'g', '💪'],
+                    ['fat_g', '脂肪', 'g', '🧈'], ['carbohydrate_g', '碳水化合物', 'g', '🍚']
+                ];
+                const extraNutrients = [
+                    ['sodium_mg', '钠', 'mg', '🧂'], ['cholesterol_mg', '胆固醇', 'mg', '🩸'],
+                    ['vitamin_c_mg', '维生素C', 'mg', '🍋'], ['calcium_mg', '钙', 'mg', '🦴'],
+                    ['iron_mg', '铁', 'mg', '⚡'], ['potassium_mg', '钾', 'mg', '🫀']
+                ].filter(([key]) => f[key] > 0);
+
+                document.getElementById('foodDetailBody').innerHTML = `
+                    <div class="detail-header">
+                        <div class="detail-name">${f.name}<small>${f.name_en}</small></div>
+                        ${f.category ? `<span class="detail-cat-badge">${categoryMap[f.category] || f.category}</span>` : ''}
+                    </div>
+                    ${f.edible_ratio ? `<p style="color:#666;margin-bottom:16px;font-size:14px;">可食部占比：<b>${(f.edible_ratio*100).toFixed(0)}%</b></p>` : ''}
+
+                    <h5 style="font-size:16px;margin-bottom:12px;color:#444;">核心营养素（每100g）</h5>
+                    <div class="detail-nutrients">
+                        ${mainNutrients.map(([key, label, unit, icon]) => f[key] != null ? `
+                            <div class="detail-nutrient-card">
+                                <div class="icon">${icon}</div>
+                                <div class="val">${f[key].toFixed(1)}</div>
+                                <div class="label">${label} (${unit})</div>
+                            </div>` : '').join('')}
+                    </div>
+
+                    ${extraNutrients.length ? `
+                    <h5 style="font-size:16px;margin-bottom:12px;color:#444;">详细营养数据（每100g）</h5>
+                    <table class="detail-full-table nutrient-table">
+                        <thead><tr><th>营养素</th><th>含量</th></tr></thead>
+                        <tbody>
+                            ${extraNutrients.map(([key, label, unit]) =>
+                                `<tr><td>${nutrientIcons[key]||''} ${label}</td><td><b>${f[key].toFixed(1)} ${unit}</b></td></tr>`
+                            ).join('')}
+                        </tbody>
+                    </table>` : ''}
+                `;
+                document.getElementById('foodModal').classList.remove('hidden');
+            });
+        }
+
+        function closeFoodModal() { document.getElementById('foodModal').classList.add('hidden'); }
+
+        // ESC 关闭
+        document.addEventListener('keydown', e => { if(e.key==='Escape') closeFoodModal(); });
+    </script>
+</body>
+</html>
