@@ -1,6 +1,8 @@
 import * as React from "react"
 import { useState, useRef, useCallback, useEffect } from "react"
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom"
+import { Capacitor } from "@capacitor/core"
+import MobileApp from "@/mobile/MobileApp"
 import { motion, AnimatePresence } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -44,7 +46,7 @@ import ProfilePage from "@/pages/ProfilePage"
 // ============================================================
 // API
 // ============================================================
-const API_BASE = "/api/v1"
+const API_BASE = import.meta.env.VITE_API_BASE || "/api/v1"
 
 interface ApiResponse<T = unknown> {
   code: number
@@ -766,7 +768,25 @@ function AppRoutes() {
   )
 }
 
+// 移动端判定：Capacitor 原生环境（APK）或 URL 显式 ?mobile=1（浏览器调试用）
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(() => {
+    if (typeof window === "undefined") return false
+    const param = new URLSearchParams(window.location.search).get("mobile")
+    return Capacitor.isNativePlatform() || param === "1"
+  })
+  return mobile
+}
+
 export default function App() {
+  const isMobile = useIsMobile()
+  if (isMobile) {
+    return (
+      <BrowserRouter>
+        <MobileApp />
+      </BrowserRouter>
+    )
+  }
   return (
     <BrowserRouter>
       <AppRoutes />
