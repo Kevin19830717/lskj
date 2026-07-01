@@ -322,14 +322,14 @@ export default function AIChatPage() {
 
   return (
     <AppShell title="AI 健康助手" titleIcon={<Sparkles className="w-6 h-6 text-[#667eea]" />}>
-      <div className="flex flex-col h-[calc(100vh-180px)]">
+      <div className="flex flex-col h-[calc(100vh-140px)] lg:h-[calc(100vh-180px)]">
         {/* 模式切换 */}
         <div className="flex items-center justify-center gap-2 mb-3">
           {/* 专家模式 toggle 开关 */}
           <motion.button
             onClick={() => setMode(mode === "expert" ? "fast" : "expert")}
             className={cn(
-              "group relative flex items-center gap-2.5 pl-3 pr-4 py-2 rounded-full text-xs font-medium transition-all duration-500 ease-out shadow-sm border",
+              "group relative flex items-center gap-1.5 pl-2 pr-2.5 py-1 lg:gap-2.5 lg:pl-3 lg:pr-4 lg:py-2 rounded-full text-xs font-medium transition-all duration-500 ease-out shadow-sm border",
               mode === "expert"
                 ? "bg-gradient-to-r from-[#667eea] to-[#764ba2] border-[#667eea] text-white shadow-[0_2px_12px_rgba(102,126,234,0.35)]"
                 : "bg-white/70 backdrop-blur-sm border-[rgba(200,195,235,0.4)] text-gray-500 hover:text-gray-900 hover:border-gray-700"
@@ -371,7 +371,7 @@ export default function AIChatPage() {
               {/* Toggle 滑块 */}
               <span
                 className={cn(
-                  "inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-300 flex items-center justify-center",
+                  "inline-block h-3 w-3 lg:h-4 lg:w-4 transform rounded-full bg-white shadow-sm transition-transform duration-300 flex items-center justify-center",
                   mode === "expert" ? "translate-x-4" : "translate-x-0.5"
                 )}
               >
@@ -388,18 +388,18 @@ export default function AIChatPage() {
         <div className="relative flex-1 min-h-0">
           <div
             ref={scrollRef}
-            className="absolute inset-0 overflow-y-auto pr-2 space-y-5"
+            className="absolute inset-0 overflow-y-auto pr-1 lg:pr-2 space-y-3 lg:space-y-5"
           >
             {messages.map((msg, idx) => (
             <div
               key={idx}
-              className={cn("flex gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
+              className={cn("flex gap-2 lg:gap-3", msg.role === "user" ? "flex-row-reverse" : "flex-row")}
             >
               {/* 头像：仅用户显示，专家模式下翻转为白底紫线 */}
               {msg.role === "user" && (
                 <div
                   className={cn(
-                    "flex-shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-500 ease-out",
+                    "flex-shrink-0 w-7 h-7 lg:w-10 lg:h-10 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-500 ease-out",
                     mode === "expert"
                       ? "bg-white border border-[rgba(200,195,235,0.5)] text-[#667eea] shadow-[0_4px_14px_rgba(102,126,234,0.15)]"
                       : "bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white shadow-[0_4px_14px_rgba(102,126,234,0.4)]"
@@ -412,7 +412,7 @@ export default function AIChatPage() {
               {/* 气泡：专家模式助手气泡用深色主题（黑底白字），切换时平滑过渡 */}
               <div
                 className={cn(
-                  "relative max-w-[72%] px-5 py-3.5 rounded-2xl shadow-md transition-all duration-500 ease-out",
+                  "relative max-w-[85%] lg:max-w-[72%] px-4 py-3 lg:px-5 lg:py-3.5 rounded-2xl shadow-md transition-all duration-500 ease-out",
                   msg.role === "user"
                     ? mode === "expert"
                       ? "bg-white/95 text-gray-700 rounded-tr-md border border-[rgba(200,195,235,0.4)] shadow-[0_4px_16px_rgba(102,126,234,0.08)]"
@@ -433,7 +433,7 @@ export default function AIChatPage() {
                     )}
                   />
                 )}
-                <div className="relative text-[14px] leading-relaxed break-words">
+                <div className="relative text-[13px] lg:text-[14px] leading-relaxed break-words">
                   {/* DeepSeek 风格可折叠思考区 */}
                   {msg.role === "assistant" && msg.thinking && (
                     <ThinkingBlock
@@ -483,13 +483,13 @@ export default function AIChatPage() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="flex flex-wrap gap-2 py-3"
+            className="flex flex-wrap gap-2 py-2 lg:py-3"
           >
             {quickQuestions.map((q) => (
               <button
                 key={q.text}
                 onClick={() => send(q.text)}
-                className="group flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/70 backdrop-blur-sm border border-[rgba(102,126,234,0.25)] text-sm text-gray-600 hover:bg-gradient-to-r hover:from-[#667eea]/10 hover:to-[#764ba2]/10 hover:border-[#667eea]/40 hover:text-[#3730a3] transition-all duration-300 hover:shadow-md hover:-translate-y-0.5"
+                className="group flex items-center gap-1.5 px-3 py-1.5 lg:px-4 lg:py-2 rounded-full bg-white/70 backdrop-blur-sm border border-[rgba(102,126,234,0.25)] text-xs lg:text-sm text-gray-600 hover:bg-gradient-to-r hover:from-[#667eea]/10 hover:to-[#764ba2]/10 hover:border-[#667eea]/40 hover:text-[#3730a3] transition-all duration-300 hover:shadow-md hover:-translate-y-0.5"
               >
                 <span className="text-base">{q.icon}</span>
                 <span>{q.text}</span>
@@ -499,8 +499,8 @@ export default function AIChatPage() {
         )}
 
         {/* 输入区 */}
-        <div className="pt-3">
-          <div className="flex items-end gap-2.5">
+        <div className="pt-3 pb-2 lg:pb-0">
+          <div className="flex items-end gap-2 lg:gap-2.5">
             <button
               onClick={resetChat}
               title="重置对话"

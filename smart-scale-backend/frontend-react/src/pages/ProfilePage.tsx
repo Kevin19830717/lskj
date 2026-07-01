@@ -123,10 +123,10 @@ export default function ProfilePage() {
           <div className="flex flex-col sm:flex-row relative z-10">
             {/* 左1/3：头像（名字首字）、名字、电话、编辑按钮 */}
             <div className="flex flex-col items-center justify-center gap-3 p-6 sm:w-1/3 sm:border-r border-white/15">
-              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white/30 bg-gradient-to-br from-[#a78bfa] to-[#7c3aed] font-bold text-white shadow-xl flex-shrink-0 transition-all duration-300 hover:scale-110 hover:border-white/50 hover:shadow-2xl cursor-default">
+              <div className="flex h-14 w-14 lg:h-20 lg:w-20 items-center justify-center overflow-hidden rounded-full border-4 border-white/30 bg-gradient-to-br from-[#a78bfa] to-[#7c3aed] font-bold text-white shadow-xl flex-shrink-0 transition-all duration-300 hover:scale-110 hover:border-white/50 hover:shadow-2xl cursor-default">
                 <span className="text-3xl transition-transform duration-300">{avatarLetter}</span>
               </div>
-              <h3 className="text-lg font-bold text-center transition-all duration-300 hover:scale-105 hover:text-white/90 cursor-default">{nickname || "未设置昵称"}</h3>
+              <h3 className="text-base lg:text-lg font-bold text-center transition-all duration-300 hover:scale-105 hover:text-white/90 cursor-default">{nickname || "未设置昵称"}</h3>
               <p className="text-sm text-white/65 transition-all duration-300 hover:text-white/85 hover:scale-105 cursor-default">{phone || "未绑定手机"}</p>
               <button
                 onClick={() => setShowEditModal(true)}
@@ -138,13 +138,13 @@ export default function ProfilePage() {
 
             {/* 右2/3：6格信息（悬停动画+图标） */}
             <div className="sm:w-2/3 p-5">
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 h-full content-center">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 h-full content-center">
                 {summaryItems.map((item) => {
                   const Icon = item.icon
                   return (
                     <div
                       key={item.label}
-                      className="group relative rounded-xl bg-white/15 p-3.5 text-center transition-all duration-300 hover:bg-white/25 hover:shadow-lg hover:shadow-black/10 hover:-translate-y-1 cursor-default overflow-hidden"
+                      className="group relative rounded-xl bg-white/15 p-2.5 lg:p-3.5 text-center transition-all duration-300 hover:bg-white/25 hover:shadow-lg hover:shadow-black/10 hover:-translate-y-1 cursor-default overflow-hidden"
                     >
                       {/* 悬停时显示的图标光晕 */}
                       <div
@@ -168,7 +168,7 @@ export default function ProfilePage() {
       </Card>
 
       {/* ===== 最近餐食（左） + 智能秤陪伴记录（右） ===== */}
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* 左：最近餐食 */}
         <RecentMealsList days={30} limit={4} />
 
@@ -188,7 +188,7 @@ export default function ProfilePage() {
             {companion ? (
               <div className="grid grid-cols-2 gap-3">
                 {/* 记录天数 */}
-                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-2.5 lg:p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
                   <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#667eea]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
                   <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
                     <CalendarDays className="h-3.5 w-3.5" /> 记录天数
@@ -200,7 +200,7 @@ export default function ProfilePage() {
                 </div>
 
                 {/* 记录餐数 */}
-                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-2.5 lg:p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
                   <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#764ba2]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
                   <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
                     <Utensils className="h-3.5 w-3.5" /> 记录餐数
@@ -212,7 +212,7 @@ export default function ProfilePage() {
                 </div>
 
                 {/* 食材种类 */}
-                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-2.5 lg:p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
                   <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#f59e0b]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
                   <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
                     <Flame className="h-3.5 w-3.5" /> 食材种类
@@ -224,7 +224,7 @@ export default function ProfilePage() {
                 </div>
 
                 {/* 最爱烹饪方式 */}
-                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
+                <div className="group relative rounded-2xl bg-white/70 backdrop-blur-sm border border-[#667eea]/12 p-2.5 lg:p-4 text-center transition-all duration-300 hover:shadow-lg hover:shadow-[#667eea]/10 hover:-translate-y-0.5 overflow-hidden">
                   <div className="absolute -top-3 -right-3 w-10 h-10 rounded-full bg-[#10b981]/8 transition-opacity duration-300 group-hover:opacity-100 opacity-0 blur-[2px]" />
                   <div className="flex items-center justify-center gap-1.5 text-[#667eea] text-xs mb-1.5 relative z-10">
                     <ChefHat className="h-3.5 w-3.5" /> 最爱烹饪
@@ -252,10 +252,10 @@ export default function ProfilePage() {
 
       {/* ===== 编辑信息弹窗 ===== */}
       {showEditModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] flex items-end lg:items-center justify-center p-0 lg:p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowEditModal(false)} />
-          <Card className="relative z-10 w-full max-w-lg max-h-[90vh] overflow-y-auto border-0 bg-gradient-to-br from-white to-[#f8f9ff] shadow-2xl">
-            <CardContent className="p-5">
+          <Card className="relative z-10 w-full max-w-lg max-h-[90vh] overflow-y-auto border-0 bg-gradient-to-br from-white to-[#f8f9ff] shadow-2xl rounded-t-3xl lg:rounded-3xl">
+            <CardContent className="p-3 lg:p-5">
               <div className="mb-4 flex items-center justify-between">
                 <h4 className="flex items-center gap-2 text-base font-semibold text-[#4f46b5]">
                   <User className="h-4.5 w-4.5 text-[#667eea]" /> 编辑信息
@@ -274,46 +274,46 @@ export default function ProfilePage() {
                   身高 | 体重
                   健康目标 | 过敏食物
                   最后一行：居中保存按钮 */}
-              <div className="grid grid-cols-2 gap-3.5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 lg:gap-3.5">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">昵称</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">昵称</label>
                   <Input value={nickname} onChange={e => setNickname(e.target.value)} placeholder="设置昵称..."
-                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-9 lg:h-10" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">手机号</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">手机号</label>
                   <Input value={phone} readOnly placeholder="手机号"
-                    className="border-[#667eea]/15 bg-gray-50 text-gray-500 rounded-xl h-10" />
+                    className="border-[#667eea]/15 bg-gray-50 text-gray-500 rounded-xl h-9 lg:h-10" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">性别</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">性别</label>
                   <Input value={gender} onChange={e => setGender(e.target.value)} placeholder="男 / 女"
-                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-9 lg:h-10" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">年龄</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">年龄</label>
                   <Input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder="年龄"
-                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-9 lg:h-10" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">身高 (cm)</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">身高 (cm)</label>
                   <Input type="number" value={heightCm} onChange={e => setHeightCm(e.target.value)} placeholder="身高"
-                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-9 lg:h-10" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">体重 (kg)</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">体重 (kg)</label>
                   <Input type="number" value={weightKg} onChange={e => setWeightKg(e.target.value)} placeholder="体重"
-                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-9 lg:h-10" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">健康目标</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">健康目标</label>
                   <Input value={healthGoal} onChange={e => setHealthGoal(e.target.value)} placeholder="如: 减脂"
-                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-9 lg:h-10" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-[#667eea]/80">过敏食物</label>
+                  <label className="mb-1 block text-[11px] lg:text-sm font-medium text-[#667eea]/80">过敏食物</label>
                   <Input value={allergies} onChange={e => setAllergies(e.target.value)} placeholder="逗号分隔"
-                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-10" />
+                    className="border-[#667eea]/20 focus:border-[#667eea] focus:ring-[#667eea]/20 rounded-xl h-9 lg:h-10" />
                 </div>
               </div>
 

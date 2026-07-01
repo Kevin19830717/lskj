@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent as ReactMouseEvent, type CSSProperties } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { apiGet, type DashboardStats, type RecentMeal } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -61,9 +61,10 @@ function StatsGrid({ stats, days, layout }: { stats: DashboardStats | null; days
 
   // 垂直布局（侧边窄列）：卡片纵向堆叠，图标和数值横向排列
   // 水平布局（底部全宽）：4卡片横向排列
+  // 移动端：统一 2x2 紧凑网格，扁平卡片 + 彩色左边框
   const gridClass = layout === "vertical"
-    ? "grid grid-cols-1 gap-3"
-    : "grid grid-cols-2 sm:grid-cols-4 gap-4"
+    ? "grid grid-cols-2 lg:grid-cols-1 gap-2 lg:gap-3"
+    : "grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-4"
 
   return (
     <div className={gridClass}>
@@ -77,28 +78,56 @@ function StatsGrid({ stats, days, layout }: { stats: DashboardStats | null; days
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.4, delay: i * 0.05, layout: { duration: 0.5, ease: [0.4, 0, 0.2, 1] } }}
+            style={{ "--cc": card.color } as CSSProperties}
           >
-            <GlowCard theme="green" className={cn("p-4 h-full", layout === "vertical" && "p-3.5")}>
-              <div className={cn("relative overflow-hidden", layout === "vertical" ? "flex items-center gap-3" : "flex flex-col items-center text-center gap-2")}>
+            <GlowCard
+              theme="green"
+              className={cn(
+                "h-full p-2.5",
+                layout === "vertical" ? "lg:p-3.5" : "lg:p-4",
+                // 移动端：扁平白底 + 彩色左边框（inset 阴影实现，避免与 border 工具类冲突）；桌面端：保留原流光卡片样式
+                "bg-white lg:bg-white/70",
+                "backdrop-blur-none lg:backdrop-blur-xl",
+                "rounded-none lg:rounded-2xl",
+                "shadow-[inset_3px_0_0_var(--cc)] lg:shadow-[0_4px_20px_rgba(0,0,0,0.06)]",
+                "border-0 lg:border lg:border-white/50",
+              )}
+            >
+              <div className={cn(
+                "relative overflow-hidden flex items-center gap-2",
+                layout === "vertical" ? "lg:gap-3" : "lg:flex-col lg:items-center lg:text-center lg:gap-2",
+              )}>
                 <div
                   className="absolute -top-5 -right-5 w-15 h-15 rounded-full opacity-10"
                   style={{ background: card.color }}
                 />
                 <div
-                  className={cn("rounded-xl flex items-center justify-center flex-shrink-0", layout === "vertical" ? "w-9 h-9" : "w-11 h-11")}
+                  className={cn(
+                    "rounded-xl flex items-center justify-center flex-shrink-0 w-7 h-7",
+                    layout === "vertical" ? "lg:w-9 lg:h-9" : "lg:w-11 lg:h-11",
+                  )}
                   style={{ background: `${card.color}18`, color: card.color }}
                 >
-                  <Icon className={cn(layout === "vertical" ? "w-4 h-4" : "w-5 h-5")} />
+                  <Icon className={cn("w-3.5 h-3.5", layout === "vertical" ? "lg:w-4 lg:h-4" : "lg:w-5 lg:h-5")} />
                 </div>
-                <div className={cn("min-w-0", layout === "vertical" ? "flex flex-col" : "flex flex-col items-center")}>
-                  <span className={cn("text-gray-500 font-medium truncate", layout === "vertical" ? "text-[11px]" : "text-xs")}>{card.label}</span>
+                <div className={cn("min-w-0 flex flex-col", layout === "horizontal" && "lg:items-center")}>
+                  <span className={cn(
+                    "text-gray-500 font-medium truncate text-[10px]",
+                    layout === "vertical" ? "lg:text-[11px]" : "lg:text-xs",
+                  )}>{card.label}</span>
                   {value != null && value > 0 ? (
-                    <span className={cn("font-bold text-gray-800", layout === "vertical" ? "text-base" : "text-lg")}>
+                    <span className={cn(
+                      "font-bold text-gray-800 text-sm",
+                      layout === "vertical" ? "lg:text-base" : "lg:text-lg",
+                    )}>
                       <AnimatedNumber value={value} decimals={card.decimals} duration={1.2} />
-                      <span className="text-xs font-normal text-gray-400 ml-1">{card.unit}</span>
+                      <span className="text-[10px] lg:text-xs font-normal text-gray-400 ml-1">{card.unit}</span>
                     </span>
                   ) : (
-                    <span className={cn("font-bold text-gray-300", layout === "vertical" ? "text-base" : "text-lg")}>--</span>
+                    <span className={cn(
+                      "font-bold text-gray-300 text-sm",
+                      layout === "vertical" ? "lg:text-base" : "lg:text-lg",
+                    )}>--</span>
                   )}
                 </div>
               </div>
@@ -159,7 +188,7 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
   return (
     <Card className={cn("w-full border-0 shadow-[0_4px_24px_rgba(0,0,0,0.06)] bg-white/92 backdrop-blur-[12px]")}>
       <CardHeader>
-        <CardTitle className="text-base font-bold flex items-center gap-2">
+        <CardTitle className="text-lg lg:text-base font-bold flex items-center gap-2">
           <span className="text-lg">📈</span> {periodLabel}热量趋势
         </CardTitle>
       </CardHeader>
@@ -170,7 +199,7 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
           <>
             {/* 总热量 + 趋势 */}
             <div className="flex items-end gap-3 mb-4">
-              <GradientText className="text-4xl font-bold tracking-tighter">
+              <GradientText className="text-2xl lg:text-4xl font-bold tracking-tighter">
                 {totalStr}
               </GradientText>
               <span className="text-xs text-gray-400 mb-1.5">kcal 总计</span>
@@ -190,14 +219,14 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
             </div>
 
             {/* 柱状图 — 独立固定高度容器，柱子逐个出现动画 */}
-            <div className="relative w-full" style={{ height: "160px" }}>
+            <div className="relative w-full h-[120px] lg:h-[160px]">
               <div className="absolute inset-0 flex items-end justify-between gap-1.5">
                 {chartData.map((item, index) => {
                   const pct = maxValue > 0 ? (item.value / maxValue) * 100 : 0
                   return (
                     <div key={`${days}-${index}`} className="group relative flex-1 h-full flex flex-col justify-end items-center min-w-0">
                       {/* 悬浮提示 */}
-                      <div className="absolute -top-1 left-1/2 -translate-x-1/2 -translate-y-full opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white shadow-lg">
+                      <div className="absolute -top-1 left-1/2 -translate-x-1/2 -translate-y-full opacity-0 lg:group-hover:opacity-100 transition-opacity z-10 pointer-events-none whitespace-nowrap rounded-lg bg-gray-800 px-2 py-1 text-xs text-white shadow-lg">
                         {item.day}: {item.value} kcal
                       </div>
                       {/* 柱子 — 逐个从底部弹出，key含days确保切换时重新动画 */}
@@ -268,13 +297,13 @@ function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="flex items-center gap-6">
+        <div className="flex flex-col lg:flex-row items-center lg:items-center gap-3 lg:gap-6">
           <motion.div
             className="relative flex-shrink-0 cursor-pointer"
             whileHover={{ scale: 1.05 }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
           >
-            <svg width="160" height="160" viewBox="0 0 160 160" className="-rotate-90">
+            <svg viewBox="0 0 160 160" className="w-[120px] h-[120px] lg:w-[160px] lg:h-[160px] -rotate-90">
               {items.map((item, i) => {
                 const dash = (item.pct / total) * circumference
                 const isHovered = hovered === i
@@ -303,9 +332,9 @@ function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
               <AnimatedNumber
                 value={stats?.total_meals ?? 0}
                 duration={1.2}
-                className="text-2xl font-bold text-gray-800"
+                className="text-xl lg:text-2xl font-bold text-gray-800"
               />
-              <span className="text-xs text-gray-400">{active ? active.label : "总餐次"}</span>
+              <span className="text-[11px] lg:text-xs text-gray-400">{active ? active.label : "总餐次"}</span>
               {active && (
                 <motion.span
                   initial={{ opacity: 0, y: 4 }}
@@ -318,28 +347,28 @@ function NutrientDistribution({ stats }: { stats: DashboardStats | null }) {
               )}
             </div>
           </motion.div>
-          <div className="flex-1 space-y-3">
+          <div className="flex-1 space-y-2 lg:space-y-3">
             {items.map((item, i) => {
               const Icon = item.icon
               const isHovered = hovered === i
               return (
                 <div
                   key={item.label}
-                  className="flex items-center gap-3 cursor-pointer transition-opacity"
+                  className="flex items-center gap-2 lg:gap-3 cursor-pointer transition-opacity"
                   style={{ opacity: hovered !== null && !isHovered ? 0.4 : 1 }}
                   onMouseEnter={() => setHovered(i)}
                   onMouseLeave={() => setHovered(null)}
                 >
                   <motion.div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center"
+                    className="w-6 h-6 lg:w-8 lg:h-8 rounded-lg flex items-center justify-center"
                     style={{ background: `${item.color}18` }}
                     animate={{ scale: isHovered ? 1.15 : 1 }}
                     transition={{ duration: 0.2 }}
                   >
-                    <Icon className="w-4 h-4" style={{ color: item.color }} />
+                    <Icon className="w-3 h-3 lg:w-4 lg:h-4" style={{ color: item.color }} />
                   </motion.div>
                   <div className="flex-1">
-                    <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center justify-between text-xs lg:text-sm">
                       <span className="text-gray-600">{item.label}</span>
                       <span className="font-semibold text-gray-800">{item.pct.toFixed(0)}%</span>
                     </div>
@@ -427,7 +456,7 @@ function MealDetailCard({ meal, onClose }: { meal: RecentMeal; onClose: () => vo
           </div>
 
           {/* 核心营养素 — 数值用主题色 */}
-          <div style={{ transform: "translateZ(35px)" }} className="relative z-10 mt-5 grid grid-cols-4 gap-2">
+          <div style={{ transform: "translateZ(35px)" }} className="relative z-10 mt-5 grid grid-cols-2 lg:grid-cols-4 gap-2">
             {[["🔥","热量",metric(meal.cooked_energy_kcal),"kcal"],["💪","蛋白质",metric(meal.cooked_protein_g),"g"],["🧈","脂肪",metric(meal.cooked_fat_g),"g"],["🍚","碳水",metric(meal.cooked_carbohydrate_g),"g"]]
               .map(([icon, label, value, unit]) => (
                 <div key={String(label)} className="rounded-xl px-2 py-3 text-center shadow-sm" style={{ backgroundColor: cc.bg }}>
@@ -491,7 +520,7 @@ export function RecentMealsList({ days = 30, limit = 4 }: { days?: number; limit
           {meals.length === 0 ? (
             <div className="py-8 text-center text-sm text-gray-400">暂无用餐记录</div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2 lg:space-y-3">
               {meals.map((meal, i) => {
                 const cc = cookingColor(meal.cooking_method)
                 const time = new Date(meal.created_at)
@@ -502,25 +531,25 @@ export function RecentMealsList({ days = 30, limit = 4 }: { days?: number; limit
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.3, delay: i * 0.08, ease: [0.4, 0, 0.2, 1] }}
-                    className="flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all hover:shadow-md hover:translate-x-1"
+                    className="flex items-center gap-2 lg:gap-3 rounded-lg lg:rounded-xl px-3 py-2 lg:px-4 lg:py-3 cursor-pointer transition-all hover:shadow-md hover:translate-x-1"
                     style={{ backgroundColor: cc.bg }}
                     onClick={() => setSelectedMeal(meal)}
                   >
                     <div
-                      className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold flex-shrink-0 text-white"
+                      className="w-8 h-8 lg:w-9 lg:h-9 rounded-lg flex items-center justify-center text-sm font-bold flex-shrink-0 text-white"
                       style={{ backgroundImage: `linear-gradient(to right, ${cc.from}, ${cc.to})` }}
                     >
-                      <ChefHat className="h-4 w-4" />
+                      <ChefHat className="h-3.5 w-3.5 lg:h-4 lg:w-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-800 truncate">
+                      <div className="text-xs lg:text-sm font-medium text-gray-800 truncate">
                         {meal.ingredient_names?.join("、") || meal.ingredients.join("、")}
                       </div>
-                      <div className="text-xs text-gray-400">{timeStr} · <span style={{ color: cc.text }}>{meal.cooking_method_label || meal.cooking_method}</span></div>
+                      <div className="text-[11px] lg:text-xs text-gray-400">{timeStr} · <span style={{ color: cc.text }}>{meal.cooking_method_label || meal.cooking_method}</span></div>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <div className="text-sm font-bold" style={{ color: cc.text }}>{Math.round(meal.cooked_energy_kcal)}</div>
-                      <div className="text-xs text-gray-400">kcal</div>
+                      <div className="text-xs lg:text-sm font-bold" style={{ color: cc.text }}>{Math.round(meal.cooked_energy_kcal)}</div>
+                      <div className="text-[11px] lg:text-xs text-gray-400">kcal</div>
                     </div>
                   </motion.div>
                 )
@@ -552,16 +581,16 @@ function TopFoodsCard({ stats }: { stats: DashboardStats | null }) {
         {topFoods.length === 0 ? (
           <div className="py-8 text-center text-sm text-gray-400">暂无数据</div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-1.5 lg:space-y-2">
             {topFoods.slice(0, 5).map((food, i) => (
-              <div key={food.name} className="flex items-center gap-3">
-                <span className="w-5 text-sm font-bold text-gray-400 flex-shrink-0">{i + 1}</span>
+              <div key={food.name} className="flex items-center gap-2 lg:gap-3">
+                <span className="w-5 text-xs lg:text-sm font-bold text-gray-400 flex-shrink-0">{i + 1}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between text-sm mb-1">
+                  <div className="flex items-center justify-between text-xs lg:text-sm mb-1">
                     <span className="text-gray-700 truncate">{food.name}</span>
-                    <span className="text-gray-400 text-xs">{food.count}次</span>
+                    <span className="text-gray-400 text-[11px] lg:text-xs">{food.count}次</span>
                   </div>
-                  <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-1.5 lg:h-2 rounded-full bg-gray-100 overflow-hidden">
                     <motion.div
                       className="h-full rounded-full bg-gradient-to-r from-[#667eea] to-[#764ba2]"
                       initial={{ width: 0 }}
@@ -604,8 +633,8 @@ export default function DashboardPage() {
   return (
     <AppShell title="仪表盘" titleIcon={<BarChart3 className="w-6 h-6 text-green-600" />} theme="green">
       {/* 全局时间范围选择器 */}
-      <div className="flex items-center justify-between mb-5">
-        <h2 className="text-lg font-bold text-gray-700">
+      <div className="flex items-center justify-between mb-3 lg:mb-5">
+        <h2 className="text-base lg:text-lg font-bold text-gray-700">
           {selectedPeriod.label}数据概览
         </h2>
         <AnimatedDropdown
@@ -626,11 +655,11 @@ export default function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 20 }}
           transition={{ duration: 0.25 }}
-          className="mb-6"
+          className="mb-4 lg:mb-6"
         >
-          <div className="flex flex-wrap gap-5">
+          <div className="flex flex-col lg:flex-row lg:flex-wrap gap-3 lg:gap-5">
             <div
-              className="min-w-0"
+              className="min-w-0 max-lg:!w-full"
               style={{
                 width: chartWidth,
                 transition: "width 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
@@ -639,7 +668,7 @@ export default function DashboardPage() {
               <ActivityChartCard stats={stats} days={days} />
             </div>
             <div
-              className="min-w-0"
+              className="min-w-0 max-lg:!w-full"
               style={{
                 width: statsWidth,
                 transition: "width 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
@@ -659,7 +688,7 @@ export default function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 20 }}
           transition={{ duration: 0.3, delay: 0.1 }}
-          className="grid gap-5 lg:grid-cols-2"
+          className="grid gap-3 lg:gap-5 lg:grid-cols-2"
         >
           <NutrientDistribution stats={stats} />
           <TopFoodsCard stats={stats} />

@@ -326,6 +326,8 @@ func setupRoutes(
 	protected.POST("/ai/chat/reset", chatH.ResetChat)
 	protected.POST("/ai/chat/delete-last-user", chatH.DeleteLastUserMessage)
 	protected.POST("/ai/chat/save-interrupted", chatH.SaveInterruptedMessage)
+	protected.POST("/ai/chat/upload-file", chatH.ChatUploadFile)
+	protected.POST("/ai/chat/upload-image", chatH.ChatUploadImage)
 
 	// 仪表盘
 	protected.GET("/dashboard/stats", dashboardH.GetStats)

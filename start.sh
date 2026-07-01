@@ -93,49 +93,62 @@ echo "[6/6] 配置 Nginx 反向代理 (:80)..."
 
 cat > /tmp/smart-scale.conf << 'NGINX_EOF'
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name _;
 
-    # 前端静态文件
-    root /home/ubuntu/lskj/smart-scale-backend/frontend;
+    # ===== 唯一的前端根目录（不要再改！=====）
+    root /home/ubuntu/lskj/mobile_trae/frontend-react/dist;
     index index.html;
 
-    # API 反向代理 -> Go后端 :8080
+    # ===== 后端 API
     location /api/ {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         client_max_body_size 10M;
-        proxy_read_timeout 120s;
-        proxy_send_timeout 120s;
-        # SSE 支持：禁用缓冲
+        proxy_read_timeout 300s;
         proxy_buffering off;
-        proxy_cache off;
-        proxy_http_version 1.1;
-        chunked_transfer_encoding on;
     }
 
-    # RAG API 反向代理 -> Python :8001
+    # ===== 上传文件（头像、聊天图片）—— 用 ^~ 前缀，优先级高于正则
+    location ^~ /uploads/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        client_max_body_size 10M;
+    }
+
+    # ===== RAG Python 服务
     location /rag/ {
         rewrite ^/rag/(.*) /$1 break;
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 300s;
         proxy_buffering off;
-        proxy_http_version 1.1;
     }
 
-    # 前端路由 fallback
+    # ===== SPA 静态资源（30 天缓存）
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|webp|ttf|eot)$ {
+        access_log off;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # ===== index.html 永不缓存
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        expires -1;
+    }
+
+    # ===== SPA fallback —— 所有未匹配路径都回退到 index.html
+    # （核心！不要再加任何正则 location 拦截 SPA 路由！=====）
     location / {
         try_files $uri $uri/ /index.html;
-    }
-
-    # 静态资源缓存
-    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
-        expires 30d;
-        add_header Cache-Control "public";
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
 }
 NGINX_EOF
@@ -144,7 +157,9 @@ sudo cp /tmp/smart-scale.conf /etc/nginx/sites-available/smart-scale.conf
 sudo ln -sf /etc/nginx/sites-available/smart-scale.conf /etc/nginx/sites-enabled/
 # 移除默认配置避免冲突
 sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t 2>/dev/null && sudo systemctl reload nginx && echo "  Nginx 已配置" || echo "  Nginx 配置失败（请检查日志）"
+# 清理 .bak 文件（否则会被 nginx 当配置加载导致冲突）
+sudo rm -f /etc/nginx/sites-enabled/*.bak*
+sudo nginx -t 2>/dev/null && sudo systemctl restart nginx && echo "  Nginx 已配置" || echo "  Nginx 配置失败（请检查日志）"
 
 # ---- 等待服务启动 ----
 echo ""

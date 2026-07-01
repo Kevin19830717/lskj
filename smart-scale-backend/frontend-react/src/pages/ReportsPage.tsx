@@ -120,9 +120,9 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
   const maxCount = Math.max(...topFoods.map(f => f.count), 1)
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4 py-8" onClick={onClose}>
-      <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-3xl bg-white border border-gray-200 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b px-6 py-4 sticky top-0 z-10" style={{ backgroundColor: tg.bg }}>
+    <div className="fixed inset-0 z-[60] flex items-end lg:items-center justify-center bg-black/45 px-0 lg:px-4 py-0 lg:py-8" onClick={onClose}>
+      <div className="w-full max-w-3xl max-h-[90vh] lg:max-h-[85vh] overflow-y-auto rounded-t-3xl lg:rounded-3xl bg-white border border-gray-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b px-4 lg:px-6 py-3 lg:py-4 sticky top-0 z-10" style={{ backgroundColor: tg.bg }}>
           <div>
             <h4 className="text-lg font-semibold flex items-center gap-2">
               <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-bold text-white"
@@ -134,13 +134,13 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
           <button onClick={onClose} className="rounded-full p-2 text-gray-400 hover:bg-gray-100"><X className="h-5 w-5" /></button>
         </div>
         {!isDaily && (
-          <div className="px-6 pt-4">
+          <div className="px-4 lg:px-6 pt-4">
             <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
               {TAB_ITEMS.map(tab => {
                 const Icon = tab.icon
                 return (
                   <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                    className="relative px-4 py-2 text-sm font-medium rounded-lg text-gray-600 hover:text-gray-900">
+                    className="relative px-2 py-1.5 lg:px-4 lg:py-2 text-[11px] lg:text-sm font-medium rounded-lg text-gray-600 hover:text-gray-900">
                     {activeTab === tab.id && <motion.div layoutId="report-detail-tab" className="absolute inset-0 bg-white shadow rounded-lg" transition={{ type: "spring", duration: 0.5 }} />}
                     <span className="relative z-10 flex items-center gap-1.5"><Icon className="h-4 w-4" />{tab.label}</span>
                   </button>
@@ -149,7 +149,7 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
             </div>
           </div>
         )}
-        <div className="p-6 min-h-[380px] relative">
+        <div className="p-3 lg:p-6 min-h-[380px] relative">
           <AnimatePresence mode="popLayout">
             {/* ===== 基本信息 ===== */}
             {activeTab === "basic" && (
@@ -351,15 +351,15 @@ export default function ReportsPage() {
     <div className="flex items-center gap-2 ml-auto flex-wrap">
       <AnimatedDropdown options={summaryTypeOptions} value={summaryType} onChange={setSummaryType} theme="green" icon={<Clock className="h-4 w-4" />} />
       <button disabled={backfilling} onClick={handleBackfill}
-        className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:shadow-md transition disabled:opacity-50">
+        className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white px-2 py-1.5 text-xs lg:px-3 lg:py-2 lg:text-sm font-medium shadow-sm hover:shadow-md transition disabled:opacity-50">
         <Zap className={`h-4 w-4 ${backfilling ? "animate-pulse" : ""}`} />{backfilling ? "生成中…" : "生成一条"}
       </button>
       <button disabled={clearing} onClick={handleClearAll}
-        className="inline-flex items-center gap-1 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-100 transition disabled:opacity-50" title="清除周报/月报/年报（保留日报）">
+        className="inline-flex items-center gap-1 rounded-xl bg-red-50 border border-red-200 px-2 py-1.5 text-xs lg:px-3 lg:py-2 lg:text-sm text-red-600 hover:bg-red-100 transition disabled:opacity-50" title="清除周报/月报/年报（保留日报）">
         <Trash className="h-4 w-4" />清除周/月/年报
       </button>
       <button onClick={() => fetchPage(page, summaryType)}
-        className="inline-flex items-center gap-1 rounded-xl bg-white/80 border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 transition" title="刷新">
+        className="inline-flex items-center gap-1 rounded-xl bg-white/80 border border-gray-200 px-2 py-1.5 text-xs lg:px-3 lg:py-2 lg:text-sm text-gray-600 hover:bg-gray-50 transition" title="刷新">
         <RefreshCw className="h-4 w-4" />
       </button>
     </div>
@@ -382,7 +382,7 @@ export default function ReportsPage() {
       ) : (
         <>
           {/* 双列网格 + 依次出现动画 */}
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
             <AnimatePresence mode="wait">
               {summaries.map((s, idx) => {
                 const tg = TYPE_TAGS[s.summary_type] ?? TYPE_TAGS.daily
@@ -398,7 +398,7 @@ export default function ReportsPage() {
                       className="cursor-pointer border-0 hover:-translate-y-0.5 hover:shadow-lg transition-all relative group"
                       style={{ backgroundColor: tg.bg }}
                       onClick={() => setSelected(s)}>
-                      <CardContent className="p-2.5">
+                      <CardContent className="p-2 lg:p-2.5">
                         {/* 左右分区 */}
                         <div className="flex gap-3">
                           {/* 左侧：标签 + 日期 */}
@@ -407,7 +407,7 @@ export default function ReportsPage() {
                               style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}>
                               {tg.emoji} {tg.label}
                             </span>
-                            <h3 className="text-sm font-bold text-gray-900 mt-1.5 leading-tight">{fmtDate(s.summary_date)}</h3>
+                            <h3 className="text-xs lg:text-sm font-bold text-gray-900 mt-1.5 leading-tight">{fmtDate(s.summary_date)}</h3>
                           </div>
 
                           {/* 右侧：营养数据 + 常吃食物 */}
@@ -415,21 +415,21 @@ export default function ReportsPage() {
                             {i && (
                               <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                                 {i.total_energy_kcal != null && (
-                                  <span className="text-xs text-gray-600">🔥 {Math.round(i.total_energy_kcal)} kcal</span>
+                                  <span className="text-[11px] lg:text-xs text-gray-600">🔥 {Math.round(i.total_energy_kcal)} kcal</span>
                                 )}
                                 {i.total_protein_g != null && (
-                                  <span className="text-xs text-gray-600">💪 {rv(i.total_protein_g)}g</span>
+                                  <span className="text-[11px] lg:text-xs text-gray-600">💪 {rv(i.total_protein_g)}g</span>
                                 )}
                                 {i.total_fat_g != null && (
-                                  <span className="text-xs text-gray-600">🧈 {rv(i.total_fat_g)}g</span>
+                                  <span className="text-[11px] lg:text-xs text-gray-600">🧈 {rv(i.total_fat_g)}g</span>
                                 )}
                                 {i.total_carbohydrate_g != null && (
-                                  <span className="text-xs text-gray-600">🍚 {rv(i.total_carbohydrate_g)}g</span>
+                                  <span className="text-[11px] lg:text-xs text-gray-600">🍚 {rv(i.total_carbohydrate_g)}g</span>
                                 )}
                               </div>
                             )}
                             {i?.top_foods?.length ? (
-                              <p className="text-[11px] text-gray-400 mt-1.5 truncate">
+                              <p className="text-[10px] lg:text-[11px] text-gray-400 mt-1.5 truncate">
                                 常吃：{i.top_foods.slice(0, 4).map((f: { name?: string; name_en?: string }) => f.name || f.name_en).join("、")}
                               </p>
                             ) : null}
@@ -439,7 +439,7 @@ export default function ReportsPage() {
                         {/* 删除 — hover 出现 */}
                         <button type="button" disabled={deletingId === s.id}
                           onClick={(e) => handleDelete(s.id, e)}
-                          className="absolute top-2 right-2 rounded-full p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all opacity-0 group-hover:opacity-100"
+                          className="absolute top-2 right-2 rounded-full p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
                           title="删除"><Trash2 className="h-3.5 w-3.5" /></button>
 
                         {/* AI总结标记 — 有ai_summary时显示，右下角 */}
@@ -473,7 +473,7 @@ export default function ReportsPage() {
                 const end = Math.min(start + winSize - 1, totalPages)
                 return Array.from({ length: end - start + 1 }, (_, i) => start + i).map(p => (
                   <button key={p} onClick={() => goPage(p)}
-                    className={`h-8 w-8 rounded-full text-sm font-medium transition ${p === page ? "bg-gradient-to-r from-emerald-500 to-green-600 text-white" : "text-gray-500 hover:bg-gray-100"}`}>{p}</button>
+                    className={`h-6 w-6 lg:h-8 lg:w-8 rounded-full text-xs lg:text-sm font-medium transition ${p === page ? "bg-gradient-to-r from-emerald-500 to-green-600 text-white" : "text-gray-500 hover:bg-gray-100"}`}>{p}</button>
                 ))
               })()}
 

@@ -1,0 +1,13 @@
+{
+  "name": "icon-generator",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "临时包：只为装 @resvg/resvg-js 来渲染 SVG → PNG",
+  "scripts": {
+    "generate": "node generate-icons.mjs"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2"
+  }
+}

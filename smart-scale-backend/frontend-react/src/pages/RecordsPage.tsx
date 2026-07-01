@@ -105,10 +105,10 @@ function RecordDetail({ record }: { record: WeighRecord }) {
       {/* 顶部装饰条 */}
       <div className="h-1.5 bg-gradient-to-r from-[#667eea] to-[#764ba2]" />
 
-      <div className="p-5">
-        <div className="grid gap-5 md:grid-cols-[0.9fr_1fr]">
+      <div className="p-3 lg:p-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[0.9fr_1fr] gap-4 lg:gap-5">
           {/* 食材明细 — 整体垂直居中 */}
-          <div className="rounded-xl bg-white/70 backdrop-blur-sm p-5 shadow-sm border border-white/50 flex flex-col justify-center min-h-[240px]">
+          <div className="rounded-xl bg-white/70 backdrop-blur-sm p-3 lg:p-5 shadow-sm border border-white/50 flex flex-col justify-center min-h-[240px]">
             <h5 className="flex items-center justify-center gap-2 text-sm font-semibold text-[#667eea] mb-4">
               <Scale className="h-4 w-4 text-[#667eea]" /> 食材明细
             </h5>
@@ -154,11 +154,11 @@ function RecordDetail({ record }: { record: WeighRecord }) {
             {/* 核心营养素 */}
             <div className="grid grid-cols-2 gap-2.5">
               {coreMetrics.map((m) => (
-                <div key={m.label} className="rounded-xl bg-white/70 backdrop-blur-sm p-3 text-center shadow-sm border border-white/50">
+                <div key={m.label} className="rounded-xl bg-white/70 backdrop-blur-sm p-2 lg:p-3 text-center shadow-sm border border-white/50">
                   <div className="flex items-center justify-center gap-1 text-xs text-gray-500 mb-1">
                     <span style={{ color: m.color }}>{m.icon}</span> {m.label}
                   </div>
-                  <div className="text-lg font-bold" style={{ color: m.color }}>
+                  <div className="text-base lg:text-lg font-bold" style={{ color: m.color }}>
                     {formatMetric(m.value, m.label === "热量" ? 0 : 1)}
                     <span className="text-xs font-normal text-gray-400 ml-0.5">{m.unit}</span>
                   </div>
@@ -168,8 +168,8 @@ function RecordDetail({ record }: { record: WeighRecord }) {
 
             {/* 详细营养素 */}
             {detailMetrics.length > 0 && (
-              <div className="rounded-xl bg-white/70 backdrop-blur-sm p-3 shadow-sm border border-white/50">
-                <div className="grid grid-cols-3 gap-3 text-xs">
+              <div className="rounded-xl bg-white/70 backdrop-blur-sm p-2 lg:p-3 shadow-sm border border-white/50">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
                   {detailMetrics.map((m) => (
                     <div key={m.label} className="text-center py-1">
                       <div className="font-bold text-[#5a6fd8]">{formatMetric(m.value)} {m.unit}</div>
@@ -347,22 +347,22 @@ export default function RecordsPage() {
       `}</style>
 
       {/* 工具栏 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div className="flex items-center gap-3">
-          <div className="relative">
+      <div className="flex flex-col lg:flex-row lg:flex-wrap items-start lg:items-center justify-between gap-3 mb-5">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3 w-full lg:w-auto">
+          <div className="relative w-full lg:w-auto">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索食材或烹饪方式..."
-              className="h-10 min-w-[220px] rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20 transition-all"
+              className="h-9 lg:h-10 w-full lg:min-w-[220px] rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-xs lg:text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20 transition-all"
             />
           </div>
           <span className="text-sm text-gray-500">
             共 {total} 条记录{searchQuery.trim() ? `，筛选 ${filteredItems.length} 条` : ""}
           </span>
         </div>
-        <div className="date-picker-purple flex flex-wrap items-center gap-2">
+        <div className="date-picker-purple flex flex-wrap items-center gap-2 w-full lg:w-auto">
           <JollyDateRangePicker
             label="日期范围"
             value={dateRange}
@@ -370,22 +370,22 @@ export default function RecordsPage() {
               setCurrentPage(1)
               setDateRange(value as DateRange | null)
             }}
-            className="min-w-[300px]"
+            className="w-full lg:min-w-[300px]"
           />
         </div>
       </div>
 
-      <Card className="border-0 bg-white/85 shadow-[0_12px_40px_rgba(102,126,234,0.12)]">
+      <Card className="border-0 bg-white lg:bg-white/85 shadow-none lg:shadow-[0_12px_40px_rgba(102,126,234,0.12)]">
         <CardContent className="p-0">
           {/* 分页 */}
-          <div className="flex flex-wrap items-center justify-center gap-3 border-b border-gray-100 px-6 py-4">
+          <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 border-b border-gray-100 px-4 lg:px-6 py-3 lg:py-4">
             {records && records.total_pages > 1 && (
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-1 lg:gap-2">
                 <button
                   type="button"
                   disabled={currentPage <= 1}
                   onClick={() => setCurrentPage(1)}
-                  className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                  className="h-6 lg:h-7 rounded-full border border-[#667eea]/30 px-2 lg:px-3 text-[10px] lg:text-xs font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
                   首页
                 </button>
@@ -393,9 +393,9 @@ export default function RecordsPage() {
                   type="button"
                   disabled={currentPage <= 1}
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                  className="h-6 lg:h-7 rounded-full border border-[#667eea]/30 px-2 lg:px-3 text-[10px] lg:text-xs font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
-                  <ChevronLeft className="h-4 w-4" />上一页
+                  <ChevronLeft className="h-3.5 w-3.5 lg:h-4 lg:w-4" />上一页
                 </button>
                 <div className="flex items-center gap-1">
                   {pageButtons.map((page) => (
@@ -403,7 +403,7 @@ export default function RecordsPage() {
                       key={page}
                       type="button"
                       onClick={() => setCurrentPage(page)}
-                      className="h-8 w-8 rounded-full text-sm font-medium transition"
+                      className="h-6 w-6 lg:h-7 lg:w-7 rounded-full text-[10px] lg:text-xs font-medium transition"
                       style={page === currentPage
                         ? { backgroundImage: "linear-gradient(to right, #667eea, #764ba2)", color: "#fff" }
                         : { color: "#6b7280" }}
@@ -416,15 +416,15 @@ export default function RecordsPage() {
                   type="button"
                   disabled={currentPage >= (records?.total_pages ?? 1)}
                   onClick={() => setCurrentPage((p) => Math.min(records?.total_pages ?? p, p + 1))}
-                  className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                  className="h-6 lg:h-7 rounded-full border border-[#667eea]/30 px-2 lg:px-3 text-[10px] lg:text-xs font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
-                  下一页<ChevronRight className="h-4 w-4" />
+                  下一页<ChevronRight className="h-3.5 w-3.5 lg:h-4 lg:w-4" />
                 </button>
                 <button
                   type="button"
                   disabled={currentPage >= (records?.total_pages ?? 1)}
                   onClick={() => setCurrentPage(records?.total_pages ?? 1)}
-                  className="h-8 rounded-full border border-[#667eea]/30 px-3 text-sm font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                  className="h-6 lg:h-7 rounded-full border border-[#667eea]/30 px-2 lg:px-3 text-[10px] lg:text-xs font-medium text-[#667eea] hover:bg-[#667eea]/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
                   尾页
                 </button>
@@ -434,7 +434,7 @@ export default function RecordsPage() {
           </div>
 
           {/* 表头 */}
-          <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 bg-gray-50/80 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <div className="hidden lg:flex items-center gap-3 px-6 py-3 border-b border-gray-200 bg-gray-50/80 text-xs font-semibold text-gray-500 uppercase tracking-wide">
             <div className="w-6" />
             <div className="flex-1 flex items-center gap-4 min-w-0">
               <div className="w-[130px] text-center whitespace-nowrap flex-shrink-0">时间</div>
@@ -469,9 +469,9 @@ export default function RecordsPage() {
                   transition={{ duration: 0.3, delay: recordIdx * 0.05, ease: [0.4, 0, 0.2, 1] }}
                   className={isExpanded ? "bg-[#f8f9ff]" : ""}
                 >
-                  {/* 概要行 */}
+                  {/* 概要行 — 桌面端 */}
                   <div
-                    className="group flex items-center gap-3 px-6 py-3 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
+                    className="group hidden lg:flex items-center gap-3 px-6 py-3 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
                     onClick={() => setExpandedId(isExpanded ? null : record.id)}
                   >
                     {/* 展开箭头 */}
@@ -532,6 +532,65 @@ export default function RecordsPage() {
                     </div>
                   </div>
 
+                  {/* 概要行 — 移动端卡片 */}
+                  <div
+                    className="lg:hidden px-3 py-2 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
+                    onClick={() => setExpandedId(isExpanded ? null : record.id)}
+                  >
+                    {/* 顶部：时间 + 烹饪方式 + 编辑/删除 + 展开箭头 */}
+                    <div className="flex items-center justify-between gap-1.5 mb-1">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <Clock className="h-2.5 w-2.5 text-[#667eea] flex-shrink-0" />
+                        <span className="text-[11px] text-gray-600 whitespace-nowrap truncate">
+                          {formatDateTime(record.created_at)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <CookingTag method={record.cooking_method} label={methodLabel} />
+                        <button type="button"
+                          onClick={(e) => { e.stopPropagation(); handleEditRecord(record) }}
+                          className="rounded-full p-1 text-[#667eea] hover:bg-[#667eea]/10 transition-all"
+                          title="编辑">
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button type="button" disabled={deletingRecordId === record.id}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record.id) }}
+                          className="rounded-full p-1 text-red-400 hover:text-red-500 hover:bg-red-50 transition-all disabled:opacity-40"
+                          title="删除">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                        <motion.div
+                          animate={{ rotate: isExpanded ? 90 : 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="flex items-center justify-center"
+                        >
+                          <ChevronDown className="h-3 w-3 text-[#667eea]" />
+                        </motion.div>
+                      </div>
+                    </div>
+
+                    {/* 食材名称 */}
+                    <div className="text-xs lg:text-sm font-semibold text-gray-800 truncate mb-1">
+                      {names.join("、")}
+                    </div>
+
+                    {/* 营养值 — 单行水平 pills */}
+                    <div className="flex items-center gap-1 text-[10px] flex-wrap">
+                      <span className="inline-flex items-center gap-0.5 rounded bg-orange-50 text-orange-600 px-1.5 py-0.5">
+                        <Flame className="h-2.5 w-2.5" /> {formatMetric(record.cooked_energy_kcal, 0)}kcal
+                      </span>
+                      <span className="inline-flex items-center gap-0.5 rounded bg-pink-50 text-pink-600 px-1.5 py-0.5">
+                        <Beef className="h-2.5 w-2.5" /> {formatMetric(record.cooked_protein_g)}g
+                      </span>
+                      <span className="inline-flex items-center gap-0.5 rounded bg-amber-50 text-amber-600 px-1.5 py-0.5">
+                        <Droplets className="h-2.5 w-2.5" /> {formatMetric(record.cooked_fat_g)}g
+                      </span>
+                      <span className="inline-flex items-center gap-0.5 rounded bg-green-50 text-green-600 px-1.5 py-0.5">
+                        <Wheat className="h-2.5 w-2.5" /> {formatMetric(record.cooked_carbohydrate_g)}g
+                      </span>
+                    </div>
+                  </div>
+
                   {/* 详情 — 紧跟该行展开 */}
                   <AnimatePresence>
                     {isExpanded && (
@@ -556,9 +615,9 @@ export default function RecordsPage() {
 
       {/* 编辑称重记录弹窗 — 浅紫色毛玻璃背景，匹配右侧内容区 */}
       {editingRecord && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" onClick={() => setEditingRecord(null)}>
+        <div className="fixed inset-0 z-[70] flex items-end justify-center lg:items-center lg:justify-center bg-black/40 px-4" onClick={() => setEditingRecord(null)}>
           <div
-            className="w-full max-w-lg rounded-2xl p-6 shadow-2xl max-h-[85vh] overflow-y-auto relative"
+            className="w-full max-w-lg lg:rounded-2xl rounded-t-2xl p-3 lg:p-4 lg:p-6 shadow-2xl max-h-[90vh] lg:max-h-[85vh] overflow-y-auto relative"
             style={{
               background: "linear-gradient(135deg, rgba(200,210,255,0.95) 0%, rgba(220,215,248,0.95) 50%, rgba(235,230,252,0.95) 100%)",
               backdropFilter: "blur(20px)",
@@ -582,15 +641,15 @@ export default function RecordsPage() {
               {/* 第一行：用餐时间(左大部) + 烹饪方式(右小格) */}
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">用餐时间</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">用餐时间</label>
                   <input type="datetime-local" value={editDateTime}
                     onChange={e => setEditDateTime(e.target.value)}
-                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2.5 text-sm text-gray-800 outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20" />
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 h-9 lg:py-2.5 text-sm text-gray-800 outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20" />
                 </div>
                 <div className="w-[120px] flex-shrink-0">
-                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">烹饪方式</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">烹饪方式</label>
                   <select value={editCookingMethod} onChange={e => setEditCookingMethod(e.target.value)}
-                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 text-gray-800 px-2.5 py-2.5 text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20">
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 text-gray-800 px-2.5 h-9 lg:py-2.5 text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20">
                     <option value="">未选择</option>
                     <option value="boil">煮</option><option value="steam">蒸</option>
                     <option value="stir_fry">炒</option><option value="braise">炖</option>
@@ -603,7 +662,7 @@ export default function RecordsPage() {
               {/* 食材逐行编辑 */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-[#5a5fcf]">食材明细</label>
+                  <label className="text-[11px] lg:text-xs font-medium text-[#5a5fcf]">食材明细</label>
                   <button type="button" onClick={() => setEditItems([...editItems, { name: "", weight: "" }])}
                     className="text-xs text-[#667eea] hover:underline font-medium">+ 添加食材</button>
                 </div>
@@ -637,65 +696,65 @@ export default function RecordsPage() {
               {/* 营养数据 */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">熟重 (g)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">熟重 (g)</label>
                   <input type="number" value={editWeight} onChange={e => setEditWeight(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">热量 (kcal)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">热量 (kcal)</label>
                   <input type="number" value={editEnergy} onChange={e => setEditEnergy(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">蛋白质 (g)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">蛋白质 (g)</label>
                   <input type="number" value={editProtein} onChange={e => setEditProtein(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">脂肪 (g)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">脂肪 (g)</label>
                   <input type="number" value={editFat} onChange={e => setEditFat(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#5a5fcf] mb-1">碳水 (g)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">碳水 (g)</label>
                   <input type="number" value={editCarb} onChange={e => setEditCarb(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 {/* 详细营养素 */}
                 <div>
-                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">钠 (mg)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#8b8fd4] mb-1">钠 (mg)</label>
                   <input type="number" value={editSodium} onChange={e => setEditSodium(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">胆固醇 (mg)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#8b8fd4] mb-1">胆固醇 (mg)</label>
                   <input type="number" value={editCholesterol} onChange={e => setEditCholesterol(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">维生素C (mg)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#8b8fd4] mb-1">维生素C (mg)</label>
                   <input type="number" value={editVitC} onChange={e => setEditVitC(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">钙 (mg)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#8b8fd4] mb-1">钙 (mg)</label>
                   <input type="number" value={editCalcium} onChange={e => setEditCalcium(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">铁 (mg)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#8b8fd4] mb-1">铁 (mg)</label>
                   <input type="number" value={editIron} onChange={e => setEditIron(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#8b8fd4] mb-1">钾 (mg)</label>
+                  <label className="block text-[11px] lg:text-xs font-medium text-[#8b8fd4] mb-1">钾 (mg)</label>
                   <input type="number" value={editPotassium} onChange={e => setEditPotassium(e.target.value)}
                     className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 px-3 py-2 text-sm text-gray-800 outline-none focus:border-[#667eea]" />
                 </div>
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 mt-5">
+            <div className="flex justify-end gap-3 mt-3 lg:mt-5">
               <button onClick={() => setEditingRecord(null)}
                 className="px-4 py-2 rounded-xl text-sm font-medium text-[#5a5fcf] bg-white/60 hover:bg-white/90 transition border border-[#c8c3eb]">
                 取消

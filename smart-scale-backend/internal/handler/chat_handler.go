@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"smart-scale-backend/internal/model"
 
@@ -104,15 +107,21 @@ func (h *ChatHandler) ChatStream(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 
 	var req struct {
-		Message string `json:"message" binding:"required"`
+		Message string   `json:"message"`
 		History []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"history"`
-		Mode string `json:"mode"`
+		Mode   string   `json:"mode"`
+		Images []string `json:"images"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request: "+err.Error()))
+		return
+	}
+	// message 和 images 至少有一个非空
+	if req.Message == "" && len(req.Images) == 0 {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "message 和 images 至少需要一个"))
 		return
 	}
 
@@ -129,6 +138,7 @@ func (h *ChatHandler) ChatStream(c *gin.Context) {
 		"message": req.Message,
 		"history": req.History,
 		"mode":    req.Mode,
+		"images":  req.Images,
 	}
 	body, _ := json.Marshal(payload)
 
@@ -325,4 +335,94 @@ func (h *ChatHandler) DeleteLastUserMessage(c *gin.Context) {
 	var ragData map[string]interface{}
 	json.Unmarshal(respBody, &ragData)
 	c.JSON(http.StatusOK, model.Success(ragData))
+}
+
+// ChatUploadFile 上传文件并解析为文本（转发到 RAG service）
+// POST /api/v1/ai/chat/upload-file
+func (h *ChatHandler) ChatUploadFile(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "文件上传失败: "+err.Error()))
+		return
+	}
+	defer file.Close()
+
+	// 限制 10MB
+	if header.Size > 10*1024*1024 {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "文件大小不能超过10MB"))
+		return
+	}
+
+	// 组装转发到 RAG service 的 multipart 请求
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, err := writer.CreateFormFile("file", header.Filename)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "创建请求失败"))
+		return
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "读取文件失败"))
+		return
+	}
+	writer.Close()
+
+	ragURL := h.ragBaseURL + "/api/v1/rag/chat/upload-file"
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", ragURL, &buf)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to create request"))
+		return
+	}
+	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to call RAG upload-file service")
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "AI文件解析服务暂时不可用"))
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		logrus.Errorf("RAG upload-file returned %d: %s", resp.StatusCode, string(respBody))
+		c.JSON(http.StatusBadGateway, model.ErrorResp(502, "文件解析服务响应异常"))
+		return
+	}
+
+	var ragData map[string]interface{}
+	json.Unmarshal(respBody, &ragData)
+	c.JSON(http.StatusOK, model.Success(ragData))
+}
+
+// ChatUploadImage 上传聊天图片到服务器（用于跨端显示）
+// POST /api/v1/ai/chat/upload-image
+func (h *ChatHandler) ChatUploadImage(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "图片上传失败: "+err.Error()))
+		return
+	}
+
+	// 限制 10MB
+	if file.Size > 10*1024*1024 {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "图片大小不能超过10MB"))
+		return
+	}
+
+	// 生成唯一文件名: chat-images/{timestamp}_{随机数}.ext
+	ext := filepath.Ext(file.Filename)
+	if ext == "" {
+		ext = ".png"
+	}
+	filename := fmt.Sprintf("chat-images/%d_%d%s", time.Now().Unix(), time.Now().UnixNano()%100000, ext)
+	savePath := filepath.Join("uploads", filename)
+
+	if err := c.SaveUploadedFile(file, savePath); err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "保存图片失败"))
+		return
+	}
+
+	imageURL := "/uploads/" + filename
+	c.JSON(http.StatusOK, model.Success(map[string]string{"url": imageURL}))
 }

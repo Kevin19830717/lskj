@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     DASHSCOPE_API_KEY: str = ""
     TEXT_MODEL: str = "qwen-plus"
     VL_MODEL: str = "qwen-vl-flash"
+    OMNI_MODEL: str = "qwen3-omni-flash"  # 多模态思考模型（支持文本+图片+enable_thinking）
     EMBEDDING_MODEL: str = "text-embedding-v2"
 
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"

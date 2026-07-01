@@ -46,3 +46,21 @@ my_doc/
 # Uploads
 uploads/
 smart-scale-backend/uploads/
+
+# Capacitor / mobile build outputs
+mobile_trae/frontend-react/dist/
+mobile_trae/frontend-react/android/**/build/
+mobile_trae/frontend-react/android/**/.gradle/
+mobile_trae/frontend-react/android/.gradle/
+.gradle/
+*.apk
+*.aab
+*.keystore
+*.jks
+.env.apk
+
+# OS-level tools (downloaded on demand, not source)
+android-sdk/
+
+# Misc
+*.docx

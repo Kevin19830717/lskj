@@ -119,8 +119,8 @@ export default function AppShell({
       ? "shadow-[4px_0_24px_rgba(21,128,61,0.2)]"
       : "shadow-[4px_0_24px_rgba(45,36,144,0.3)]",
     cardBg: isGreen
-      ? "bg-white/75 backdrop-blur-[14px] saturate-[1.2] rounded-[20px] border border-[rgba(187,247,208,0.5)] shadow-[0_6px_28px_rgba(34,197,94,0.08)] p-7 min-h-full relative overflow-hidden"
-      : "bg-[radial-gradient(ellipse_at_20%_0%,rgba(102,126,234,0.14)_0%,transparent_55%),radial-gradient(ellipse_at_80%_100%,rgba(118,75,162,0.11)_0%,transparent_55%)] backdrop-blur-[16px] saturate-[1.3] rounded-[20px] border border-[rgba(200,195,235,0.35)] shadow-[0_8px_32px_rgba(102,126,234,0.1),inset_0_1px_0_rgba(255,255,255,0.4)] p-7 min-h-full relative overflow-hidden",
+      ? "bg-white/75 backdrop-blur-[14px] saturate-[1.2] rounded-none lg:rounded-[20px] border-0 lg:border border-[rgba(187,247,208,0.5)] shadow-none lg:shadow-[0_6px_28px_rgba(34,197,94,0.08)] p-3 lg:p-7 min-h-full relative overflow-hidden"
+      : "bg-white lg:bg-[radial-gradient(ellipse_at_20%_0%,rgba(102,126,234,0.14)_0%,transparent_55%),radial-gradient(ellipse_at_80%_100%,rgba(118,75,162,0.11)_0%,transparent_55%)] lg:backdrop-blur-[16px] lg:saturate-[1.3] rounded-none lg:rounded-[20px] border-0 lg:border border-[rgba(200,195,235,0.35)] shadow-none lg:shadow-[0_8px_32px_rgba(102,126,234,0.1),inset_0_1px_0_rgba(255,255,255,0.4)] p-3 lg:p-7 min-h-full relative overflow-hidden",
     floatA: isGreen
       ? "bg-[radial-gradient(circle,rgba(74,222,128,0.05)_0%,transparent_70%)]"
       : "bg-[radial-gradient(circle,rgba(102,126,234,0.09)_0%,transparent_70%)]",
@@ -163,7 +163,7 @@ export default function AppShell({
     <div className={cn("relative flex h-screen overflow-hidden bg-fixed", t.bg)}>
       <nav
         className={cn(
-          "fixed left-0 top-0 bottom-0 z-50 flex flex-col transition-all duration-300",
+          "fixed left-0 top-0 bottom-0 z-50 hidden lg:flex flex-col transition-all duration-300",
           t.sidebar, t.sidebarShadow, t.navText,
           collapsed ? "w-20" : "w-60"
         )}
@@ -259,7 +259,7 @@ export default function AppShell({
       {/* 折叠按钮：跨在侧边栏与主区域交界线上(各占一半)，垂直居中，translateX(-50%) 使中心对齐边线 */}
       <div
         className={cn(
-          "fixed top-1/2 -translate-y-1/2 -translate-x-1/2 z-[60] transition-all duration-300",
+          "fixed top-1/2 -translate-y-1/2 -translate-x-1/2 z-[60] hidden lg:block transition-all duration-300",
           collapsed ? "left-20" : "left-60"
         )}
       >
@@ -268,8 +268,8 @@ export default function AppShell({
 
       <main
         className={cn(
-          "box-border h-screen p-7 relative z-1 overflow-x-hidden overflow-y-auto transition-all duration-300",
-          collapsed ? "ml-20 w-[calc(100%-80px)]" : "ml-60 w-[calc(100%-240px)]"
+          "box-border h-screen p-0 pt-11 pb-14 lg:p-7 relative z-1 overflow-x-hidden overflow-y-auto transition-all duration-300",
+          collapsed ? "lg:ml-20 lg:w-[calc(100%-80px)] w-full" : "lg:ml-60 lg:w-[calc(100%-240px)] w-full"
         )}
       >
         <AnimatePresence mode="wait">
@@ -284,23 +284,86 @@ export default function AppShell({
               contentClassName
             )}
           >
-          <div className={cn("absolute -top-15 -right-10 w-50 h-50 rounded-full pointer-events-none animate-[lightFloat_8s_ease-in-out_infinite]", t.floatA)} />
-          <div className={cn("absolute -bottom-20 -left-8 w-45 h-45 rounded-full pointer-events-none animate-[lightFloat_10s_ease-in-out_infinite_reverse]", t.floatB)} />
-          <AuroraBackground theme={theme} className={isGreen ? "opacity-20" : "opacity-60"} />
+          <div className="absolute -top-15 -right-10 w-50 h-50 rounded-full pointer-events-none animate-[lightFloat_8s_ease-in-out_infinite] hidden lg:block" />
+          <div className={cn("absolute -bottom-20 -left-8 w-45 h-45 rounded-full pointer-events-none animate-[lightFloat_10s_ease-in-out_infinite_reverse] hidden lg:block", t.floatB)} />
+          <AuroraBackground theme={theme} className={isGreen ? "opacity-20 hidden lg:block" : "opacity-60 hidden lg:block"} />
 
           <div className="relative z-10">
-            <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+            <div className="hidden lg:flex justify-between items-center mb-6 flex-wrap gap-3">
               <h3 className={cn("text-[22px] font-bold flex items-center gap-2", t.titleColor)}>
                 {titleIcon}
                 {title}
               </h3>
               {actions}
             </div>
+            {/* 移动端：actions 放在标题下方（无标题行） */}
+            {actions && (
+              <div className="lg:hidden flex items-center gap-2 mb-3 overflow-x-auto scrollbar-none -mx-1 px-1">
+                {actions}
+              </div>
+            )}
             {children}
           </div>
         </motion.div>
         </AnimatePresence>
       </main>
+
+      {/* ===== 移动端顶部标题栏（仅 <lg 显示）===== */}
+      <header
+        className={cn(
+          "fixed top-0 left-0 right-0 z-[55] flex items-center justify-between px-3 h-11 lg:hidden",
+          isGreen ? "bg-[#059669] text-white" : "bg-[#4338ca] text-white"
+        )}
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-sm flex-shrink-0">🥗</span>
+          <span className="text-[13px] font-semibold truncate">{title}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate("/profile")}
+          className={cn(
+            "w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0",
+            t.avatarBg
+          )}
+        >
+          {userInitial}
+        </button>
+      </header>
+
+      {/* ===== 移动端底部 TabBar（仅 <lg 显示）===== */}
+      <nav
+        className={cn(
+          "fixed bottom-0 left-0 right-0 z-[55] flex items-stretch lg:hidden bg-white border-t border-gray-200/80",
+          isGreen ? "" : ""
+        )}
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        {navItems.map((item) => {
+          const isActive = location.pathname === item.path
+          const Icon = item.icon
+          return (
+            <button
+              key={item.path}
+              onClick={() => navigate(item.path)}
+              className="flex-1 flex flex-col items-center justify-center py-1.5 gap-0"
+            >
+              <Icon
+                className={cn("w-[18px] h-[18px] transition-colors", isActive ? (isGreen ? "text-green-600" : "text-[#667eea]") : "text-gray-400")}
+              />
+              <span
+                className={cn(
+                  "text-[9px] leading-tight mt-0.5",
+                  isActive ? (isGreen ? "text-green-600 font-medium" : "text-[#667eea] font-medium") : "text-gray-400"
+                )}
+              >
+                {item.label}
+              </span>
+            </button>
+          )
+        })}
+      </nav>
 
       <style>{`
         @keyframes lightFloat {

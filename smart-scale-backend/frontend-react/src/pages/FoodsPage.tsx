@@ -57,10 +57,10 @@ function FoodDetailCard({ food, onClose }: { food: Food; onClose: () => void }) 
   const onLeave = () => { const el = cardRef.current; if (el) el.style.transform = "rotateX(0deg) rotateY(0deg) scale(1)" }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/55 px-4 py-8" onClick={onClose}>
-      <div className="w-full max-w-2xl" style={{ perspective: "1000px" }} onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[60] flex items-end lg:items-center justify-center bg-black/55 px-0 lg:px-4 py-0 lg:py-8" onClick={onClose}>
+      <div className="w-full max-w-2xl max-h-[90vh] lg:max-h-none overflow-y-auto" style={{ perspective: "1000px" }} onClick={e => e.stopPropagation()}>
         <div ref={cardRef} onMouseMove={onMove} onMouseLeave={onLeave}
-          className="rounded-3xl border bg-white p-7 shadow-2xl transition-transform duration-200 ease-out"
+          className="rounded-t-3xl lg:rounded-3xl border bg-white p-4 lg:p-7 shadow-2xl transition-transform duration-200 ease-out"
           style={{ borderColor: c.from, transformStyle: "preserve-3d" }}>
           <div className="pointer-events-none absolute inset-0 rounded-3xl bg-[linear-gradient(to_right,#00000006_1px,transparent_1px),linear-gradient(to_bottom,#00000006_1px,transparent_1px)] bg-[size:32px_32px] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)]" />
 
@@ -82,7 +82,7 @@ function FoodDetailCard({ food, onClose }: { food: Food; onClose: () => void }) 
           </div>
 
           {/* 核心营养素 — 数值用主题色 */}
-          <div style={{ transform: "translateZ(35px)" }} className="relative z-10 mt-5 grid grid-cols-4 gap-2">
+          <div style={{ transform: "translateZ(35px)" }} className="relative z-10 mt-5 grid grid-cols-2 lg:grid-cols-4 gap-2">
             {[["🔥","能量",food.energy_kcal,"kcal"],["💪","蛋白质",food.protein_g,"g"],["🧈","脂肪",food.fat_g,"g"],["🍚","碳水",food.carbohydrate_g,"g"]]
               .map(([icon, label, value, unit]) => (
                 <div key={String(label)} className="rounded-xl px-2 py-3 text-center shadow-sm" style={{ backgroundColor: c.bg }}>
@@ -165,13 +165,13 @@ export default function FoodsPage() {
   return (
     <AppShell title="食物营养库" titleIcon={<UtensilsCrossed className="w-6 h-6 text-green-600" />}
       actions={(
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative">
+        <div className="flex flex-wrap items-center gap-2 lg:gap-3 w-full lg:w-auto">
+          <div className="relative flex-1 min-w-0">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input value={query} onChange={e => setQuery(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void search() } }}
               placeholder="搜索食物（中文名/英文名）..."
-              className="h-11 min-w-[280px] rounded-lg border border-white/60 bg-white/85 pl-9 pr-3 text-sm shadow-sm outline-none focus:border-green-500" />
+              className="h-9 lg:h-11 w-full lg:min-w-[280px] rounded-lg border border-white/60 bg-white/85 pl-9 pr-3 text-xs lg:text-sm shadow-sm outline-none focus:border-green-500" />
           </div>
           <LiquidGlassButton color="#22c55e" onClick={() => void search()}>搜索</LiquidGlassButton>
           <LiquidGlassButton color="#22c55e" onClick={() => void loadAll()}>显示全部</LiquidGlassButton>
@@ -180,9 +180,9 @@ export default function FoodsPage() {
       <p className="mb-4 text-sm text-gray-500">{label}</p>
 
       {/* 分类筛选 — 选中态用各分类主题色 */}
-      <div className="mb-5 flex flex-wrap gap-2">
+      <div className="mb-5 flex gap-2 overflow-x-auto flex-nowrap lg:flex-wrap">
         <button type="button" onClick={() => switchCat("all")}
-          className="rounded-full border px-4 py-2 text-sm font-medium transition"
+          className="rounded-full border px-3 py-1.5 text-xs lg:px-4 lg:py-2 lg:text-sm font-medium transition"
           style={cat === "all"
             ? { backgroundImage: `linear-gradient(to right, ${DEFAULT_C.from}, ${DEFAULT_C.to})`, color: "#fff", borderColor: "transparent" }
             : { borderColor: "#e5e7eb", backgroundColor: "rgba(255,255,255,0.8)", color: "#4b5563" }}>
@@ -194,7 +194,7 @@ export default function FoodsPage() {
           const isActive = cat === c
           return (
             <button key={c} type="button" onClick={() => switchCat(c)}
-              className="rounded-full border px-4 py-2 text-sm font-medium transition"
+              className="rounded-full border px-3 py-1.5 text-xs lg:px-4 lg:py-2 lg:text-sm font-medium transition"
               style={isActive
                 ? { backgroundImage: `linear-gradient(to right, ${clr.from}, ${clr.to})`, color: "#fff", borderColor: "transparent" }
                 : { borderColor: "#e5e7eb", backgroundColor: "rgba(255,255,255,0.8)", color: "#4b5563" }}>
@@ -210,7 +210,7 @@ export default function FoodsPage() {
         <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">未找到食物</CardContent></Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 lg:gap-3 lg:grid-cols-4">
             <AnimatePresence mode="wait">
               {paged.map((food, idx) => {
                 const c = clr2(food.category)
@@ -223,10 +223,10 @@ export default function FoodsPage() {
                       onMouseEnter={e => { e.currentTarget.style.borderColor = c.from; e.currentTarget.style.boxShadow = `0 8px 24px ${c.from}44` }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = "transparent"; e.currentTarget.style.boxShadow = "" }}
                       onClick={() => void detail(food.id)}>
-                      <CardContent className="p-3">
+                      <CardContent className="p-2 lg:p-3">
                         <div className="mb-2 flex items-start justify-between gap-1 border-b border-gray-100 pb-2">
                           <div className="min-w-0 flex-1">
-                            <h5 className="truncate text-sm font-semibold text-gray-900">{food.name}</h5>
+                            <h5 className="truncate text-xs lg:text-sm font-semibold text-gray-900">{food.name}</h5>
                             <p className="truncate text-[11px] text-gray-400">{food.name_en}</p>
                           </div>
                           {/* 小卡片标签：仅显示分类名一次（emoji 在分类筛选按钮里） */}
@@ -237,7 +237,7 @@ export default function FoodsPage() {
                             </span>)}
                         </div>
                         {/* 营养数据 — 数值用主题色 */}
-                        <div className="grid grid-cols-2 gap-1.5">
+                        <div className="grid grid-cols-2 gap-1 lg:gap-1.5">
                           {[["🔥","能量",metric(food.energy_kcal),"kcal"],["💪","蛋白质",metric(food.protein_g),"g"],["🧈","脂肪",metric(food.fat_g),"g"],["🍚","碳水",metric(food.carbohydrate_g),"g"]]
                             .map(([icon, l, value, unit]) => (
                               <div key={String(l)} className="rounded-lg px-2 py-1.5" style={{ backgroundColor: c.bg }}>
@@ -261,7 +261,7 @@ export default function FoodsPage() {
               <div className="flex items-center gap-1">
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
                   <button key={p} type="button" onClick={() => { setPage(p); setAk(k => k + 1) }}
-                    className="h-8 w-8 rounded-full text-sm font-medium transition"
+                    className="h-6 w-6 lg:h-8 lg:w-8 rounded-full text-xs lg:text-sm font-medium transition"
                     style={p === page
                       ? { backgroundImage: `linear-gradient(to right, ${DEFAULT_C.from}, ${DEFAULT_C.to})`, color: "#fff" }
                       : { color: "#6b7280" }}>{p}</button>))}

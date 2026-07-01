@@ -267,6 +267,76 @@ async def parse_medical_report(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== AI 对话文件上传解析 ====================
+
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
+ALLOWED_TEXT_TYPES = {"text/plain", "text/markdown", "text/csv", "application/json", "text/html"}
+ALLOWED_TEXT_EXTS = {".txt", ".md", ".csv", ".json", ".html", ".htm", ".log"}
+
+
+@router.post("/chat/upload-file", summary="上传文件并解析为文本（供AI对话使用）")
+async def chat_upload_file(file: UploadFile = File(...)):
+    """
+    接受图片或文本文件，解析为纯文本返回。
+    - 图片：用 qwen-vl-flash 多模态模型描述图片内容
+    - 文本：直接读取文件内容
+    返回 { code, data: { text, file_name, file_type } }
+    """
+    import base64
+    import os
+
+    try:
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="文件为空")
+
+        content_type = (file.content_type or "").lower()
+        filename = file.filename or "upload"
+        ext = os.path.splitext(filename)[1].lower()
+
+        # 图片 → 多模态解析
+        if content_type in ALLOWED_IMAGE_TYPES or ext in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            image_base64 = base64.b64encode(contents).decode("utf-8")
+            mime = content_type or "image/jpeg"
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"image": f"data:{mime};base64,{image_base64}"},
+                    {"text": "请详细描述这张图片的内容。如果是食物、营养成分表、饮食记录或健康相关的内容，请重点提取关键数据。用简洁的中文回答。"},
+                ],
+            }]
+            result = await generate_multimodal(messages=messages, max_tokens=1024)
+            parsed_text = result.get("content", "") or "（图片解析结果为空）"
+            return {
+                "code": 0,
+                "message": "success",
+                "data": {"text": parsed_text, "file_name": filename, "file_type": "image"},
+            }
+
+        # 文本文件 → 直接读取
+        if content_type in ALLOWED_TEXT_TYPES or ext in ALLOWED_TEXT_EXTS:
+            try:
+                text = contents.decode("utf-8")
+            except UnicodeDecodeError:
+                text = contents.decode("gbk", errors="replace")
+            # 截断过长文本（避免超出 LLM 上下文）
+            if len(text) > 4000:
+                text = text[:4000] + "\n\n...(文件过长，已截断)"
+            return {
+                "code": 0,
+                "message": "success",
+                "data": {"text": text, "file_name": filename, "file_type": "text"},
+            }
+
+        raise HTTPException(status_code=415, detail=f"不支持的文件类型: {content_type or ext}（支持图片和常见文本文件）")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"File upload parsing failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== AI 对话 ====================
 
 @router.post("/chat", response_model=ChatResponse, summary="AI健康对话")
@@ -435,6 +505,18 @@ async def chat_stream(req: ChatRequest):
         full_text = ""
         full_thinking = ""
 
+        # ===== 多模态支持：有图片时用 qwen3-omni-flash + 多模态消息格式 =====
+        has_images = bool(req.images)
+        # 构造用户消息 content：有图片时为 [{type:text}, {type:image_url}...]；无图片时为纯字符串
+        if has_images:
+            user_content = [{"type": "text", "text": req.message or "请分析这张图片"}]
+            for img_url in req.images:
+                user_content.append({"type": "image_url", "image_url": {"url": img_url}})
+        else:
+            user_content = req.message
+        # 有图片时强制使用多模态模型；无图片时用文本模型（质量更好）
+        chat_model = settings.OMNI_MODEL if has_images else settings.TEXT_MODEL
+
         try:
             if req.mode == "expert":
                 # ===== 专家模式：加载完整上下文 + 启用深度思考 =====
@@ -448,17 +530,20 @@ async def chat_stream(req: ChatRequest):
                 messages = [{"role": "system", "content": system_prompt}]
                 for h in req.history[-20:]:
                     messages.append({"role": h.role, "content": h.content})
-                messages.append({"role": "user", "content": req.message})
+                messages.append({"role": "user", "content": user_content})
 
                 # 专家模式：显式开启深度思考
                 payload = {
-                    "model": settings.TEXT_MODEL,
+                    "model": chat_model,
                     "messages": messages,
                     "stream": True,
                     "max_tokens": 16384,
                     "enable_thinking": True,
                     "stream_options": {"include_usage": True},
                 }
+                # 多模态模型需指定输出模态为纯文本（思考模式下不支持音频）
+                if has_images:
+                    payload["modalities"] = ["text"]
 
                 stream_error = None
                 try:
@@ -513,6 +598,7 @@ async def chat_stream(req: ChatRequest):
 
                 elapsed = time.time() - start_time
                 logger.info(f"Expert stream chat completed in {elapsed:.1f}s, user={req.user_id}, "
+                           f"model={chat_model}, images={len(req.images)}, "
                            f"thinking_len={len(full_thinking)}, reply_len={len(full_text)}")
 
                 yield f"data: {_json.dumps({'done': True}, ensure_ascii=False)}\n\n"
@@ -528,29 +614,35 @@ async def chat_stream(req: ChatRequest):
                         logger.warning(f"Fast mode RAG retrieval failed: {e}")
 
                 if archived_summaries_fast:
-                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n\n"
+                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n"
+                                    "你具备视觉能力，可以查看和分析用户发送的图片，不要声称自己无法查看图片。\n\n"
                                     "以下是用户的历史归档数据，请基于这些数据回答用户问题：\n"
                                     + archived_summaries_fast)
                 else:
-                    sys_content = "你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。"
+                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n"
+                                    "你具备视觉能力，可以查看和分析用户发送的图片，不要声称自己无法查看图片。")
                 messages = [{"role": "system", "content": sys_content}]
                 # 快速模式：仅保留最近3轮对话（6条），最小化上下文以极速响应
                 for h in req.history[-6:]:
                     messages.append({"role": h.role, "content": h.content})
-                messages.append({"role": "user", "content": req.message})
+                messages.append({"role": "user", "content": user_content})
 
                 # 快速模式：显式关闭思考，极速响应
                 payload = {
-                    "model": settings.TEXT_MODEL,
+                    "model": chat_model,
                     "messages": messages,
                     "stream": True,
                     "max_tokens": 1024,
                     "enable_thinking": False,
                     "stream_options": {"include_usage": True},
                 }
+                # 多模态模型需指定输出模态为纯文本
+                if has_images:
+                    payload["modalities"] = ["text"]
 
                 try:
-                    async with httpx.AsyncClient(timeout=60) as client:
+                    # 有图片时多模态处理较慢，放宽超时
+                    async with httpx.AsyncClient(timeout=180 if has_images else 60) as client:
                         async with client.stream("POST", CHAT_COMPLETIONS_URL, headers=HEADERS, json=payload) as response:
                             if response.status_code != 200:
                                 await response.aread()
@@ -1029,6 +1121,11 @@ def _get_chat_system_prompt(user_context: str, archived_summaries: str = "", mod
         )
     prompt = (
         "你是智能饮食健康秤的AI助手。你可以回答任何问题，用户问什么就答什么，不要强行往饮食话题上靠。\n"
+        "## 多模态能力\n"
+        "你具备视觉能力，可以查看和分析用户发送的图片。当用户消息中包含图片时：\n"
+        "- 直接描述和分析图片内容，不要声称自己无法查看图片或只是文本AI；\n"
+        "- 如果图片是食物、营养成分表、体检报告、健康数据等，请结合用户的健康数据给出专业分析；\n"
+        "- 如果图片与饮食健康无关（如游戏截图、风景照等），正常回答用户关于图片的问题即可。\n\n"
         f"{style_guide}"
         "以下数据包含该用户的历史饮食报告（周/月/年报）和健康画像，"
         "用户询问饮食、营养、健康相关问题时请基于这些数据给出具体、有依据的回答。"

@@ -40,6 +40,7 @@ import ReportsPage from "@/pages/ReportsPage"
 import AIChatPage from "@/pages/AIChatPage"
 import FoodsPage from "@/pages/FoodsPage"
 import ProfilePage from "@/pages/ProfilePage"
+import { AdaptiveRoutes } from "@/mobile/MobileApp"
 
 // ============================================================
 // API
@@ -753,7 +754,7 @@ function LandingPage() {
 // ============================================================
 function AppRoutes() {
   const location = useLocation()
-  return (
+  const desktopRoutes = (
     <Routes location={location}>
       <Route path="/" element={<LandingPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
@@ -763,6 +764,9 @@ function AppRoutes() {
       <Route path="/foods" element={<FoodsPage />} />
       <Route path="/profile" element={<ProfilePage />} />
     </Routes>
+  )
+  return (
+    <AdaptiveRoutes desktop={desktopRoutes} />
   )
 }
 
