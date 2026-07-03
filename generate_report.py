@@ -11,12 +11,21 @@ from docx.oxml import OxmlElement
 doc = Document()
 
 # ============================================================
-# 设置默认字体
+# 设置默认字体与颜色（全部黑色，覆盖Word默认蓝色标题样式）
 # ============================================================
 style = doc.styles['Normal']
 style.font.name = '宋体'
 style.font.size = Pt(12)
+style.font.color.rgb = RGBColor(0, 0, 0)
 style._element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+
+# 覆盖所有样式的默认颜色，强制改为黑色（彻底清除Word蓝色标题样式）
+for s in doc.styles:
+    try:
+        if s.font is not None:
+            s.font.color.rgb = RGBColor(0, 0, 0)
+    except Exception:
+        pass
 
 # ============================================================
 # 封面
