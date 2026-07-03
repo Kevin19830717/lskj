@@ -1,0 +1,8 @@
+{
+  "name": "smart-scale-video",
+  "version": "1.0.0",
+  "description": "智能饮食健康秤 - 嵌入式大赛参赛作品介绍视频",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080
+}

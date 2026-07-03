@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能饮食健康秤 - 嵌入式大赛参赛作品</title>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap');
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Noto Sans SC', sans-serif;
+      background: #0a0a0f;
+      overflow: hidden;
+    }
+    
+    #stage {
+      width: 1920px;
+      height: 1080px;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .gradient-bg {
+      background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #0f172a 100%);
+    }
+    
+    .glow-text {
+      text-shadow: 0 0 40px rgba(59, 130, 246, 0.5), 0 0 80px rgba(59, 130, 246, 0.3);
+    }
+    
+    .card-glass {
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 16px;
+    }
+    
+    .accent-line {
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4);
+    }
+    
+    .scene-label {
+      position: absolute;
+      top: 40px;
+      left: 60px;
+      font-size: 16px;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    
+    .floating {
+      animation: float 6s ease-in-out infinite;
+    }
+    
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-20px); }
+    }
+    
+    .pulse-ring {
+      animation: pulse-ring 2s ease-out infinite;
+    }
+    
+    @keyframes pulse-ring {
+      0% { transform: scale(0.8); opacity: 1; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+    
+    .tech-grid {
+      background-image: 
+        linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage" data-composition-id="smart-scale" data-start="0" data-width="1920" data-height="1080">
+    
+    <!-- 场景1: 大赛统一封面 (0-2s) -->
+    <div id="scene-cover" class="clip absolute inset-0 flex items-center justify-center gradient-bg tech-grid"
+         data-start="0" data-duration="2" data-track-index="0">
+      <div class="text-center">
+        <div class="text-blue-400 text-2xl tracking-widest mb-6" id="cover-subtitle">EMBEDDED SYSTEMS COMPETITION</div>
+        <h1 class="text-white text-7xl font-black mb-4 glow-text" id="cover-title">嵌入式设计大赛</h1>
+        <div class="accent-line h-1 w-64 mx-auto rounded-full" id="cover-line"></div>
+        <div class="text-gray-400 text-xl mt-6" id="cover-year">2026 · 参赛作品</div>
+      </div>
+    </div>
+    
+    <!-- 场景2: 作品名称与痛点 (2-17s) -->
+    <div id="scene-intro" class="clip absolute inset-0 gradient-bg tech-grid"
+         data-start="2" data-duration="15" data-track-index="0">
+      <div class="scene-label">作品介绍</div>
+      
+      <div class="absolute top-32 left-24 right-24">
+        <h2 class="text-white text-6xl font-black mb-4 glow-text" id="intro-title">智能饮食健康秤</h2>
+        <p class="text-blue-400 text-2xl" id="intro-subtitle">边缘感知 + 云端认知 · 双引擎健康管理系统</p>
+      </div>
+      
+      <div class="absolute top-72 left-24 right-24 grid grid-cols-3 gap-8">
+        <div class="card-glass p-8" id="pain-1">
+          <div class="text-5xl mb-4">⚠️</div>
+          <h3 class="text-white text-2xl font-bold mb-3">膳食结构失衡</h3>
+          <p class="text-gray-400 text-lg leading-relaxed">脂肪供能比突破30%上限，钠摄入量超推荐值两倍，超重肥胖率超50%</p>
+        </div>
+        
+        <div class="card-glass p-8" id="pain-2">
+          <div class="text-5xl mb-4">⚖️</div>
+          <h3 class="text-white text-2xl font-bold mb-3">只测体重 不测饮食</h3>
+          <p class="text-gray-400 text-lg leading-relaxed">市面智能秤只能告诉你多重，却无法告诉你吃了什么、营养如何</p>
+        </div>
+        
+        <div class="card-glass p-8" id="pain-3">
+          <div class="text-5xl mb-4">📱</div>
+          <h3 class="text-white text-2xl font-bold mb-3">记录门槛高</h3>
+          <p class="text-gray-400 text-lg leading-relaxed">手动称重、逐一查询营养表，操作繁琐，难以长期坚持</p>
+        </div>
+      </div>
+      
+      <div class="absolute bottom-32 left-24 right-24">
+        <div class="card-glass p-8 border-l-4 border-blue-500" id="solution">
+          <div class="flex items-center gap-6">
+            <div class="text-6xl">💡</div>
+            <div>
+              <h3 class="text-white text-3xl font-bold mb-2">我们的方案</h3>
+              <p class="text-gray-300 text-xl">"放上去、选做法" 两步操作，实现从食物感知到智能决策的全链路健康管理</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 场景3: 系统整体架构 (17-37s) -->
+    <div id="scene-arch" class="clip absolute inset-0 gradient-bg tech-grid"
+         data-start="17" data-duration="20" data-track-index="0">
+      <div class="scene-label">系统架构</div>
+      
+      <div class="absolute top-24 left-1/2 -translate-x-1/2">
+        <h2 class="text-white text-5xl font-black text-center glow-text" id="arch-title">四层架构 · 端云协同</h2>
+      </div>
+      
+      <div class="absolute top-48 left-24 right-24 bottom-24">
+        <!-- 应用层 -->
+        <div class="card-glass p-6 mb-6" id="arch-app">
+          <div class="flex items-center gap-4 mb-3">
+            <div class="w-12 h-12 rounded-full bg-purple-500/20 flex items-center justify-center text-2xl">🖥️</div>
+            <div>
+              <h3 class="text-white text-2xl font-bold">应用层</h3>
+              <p class="text-purple-400">React + Capacitor · Web端 + 移动端APP</p>
+            </div>
+          </div>
+          <div class="flex gap-3 ml-16">
+            <span class="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-full text-sm">仪表盘</span>
+            <span class="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-full text-sm">营养报告</span>
+            <span class="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-full text-sm">AI助手</span>
+            <span class="px-3 py-1 bg-purple-500/20 text-purple-300 rounded-full text-sm">历史记录</span>
+          </div>
+        </div>
+        
+        <!-- 云平台层 -->
+        <div class="card-glass p-6 mb-6" id="arch-cloud">
+          <div class="flex items-center gap-4 mb-3">
+            <div class="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center text-2xl">☁️</div>
+            <div>
+              <h3 class="text-white text-2xl font-bold">云平台层</h3>
+              <p class="text-blue-400">Go后端 + Python RAG服务 · PostgreSQL + pgvector</p>
+            </div>
+          </div>
+          <div class="flex gap-3 ml-16">
+            <span class="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-sm">Gin API服务</span>
+            <span class="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-sm">RAG智能服务</span>
+            <span class="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-sm">向量检索</span>
+            <span class="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-sm">大模型分析</span>
+          </div>
+        </div>
+        
+        <!-- 网络层 -->
+        <div class="card-glass p-6 mb-6" id="arch-net">
+          <div class="flex items-center gap-4 mb-3">
+            <div class="w-12 h-12 rounded-full bg-cyan-500/20 flex items-center justify-center text-2xl">📡</div>
+            <div>
+              <h3 class="text-white text-2xl font-bold">网络层</h3>
+              <p class="text-cyan-400">ESP32-C6 · Wi-Fi HTTP + JSON</p>
+            </div>
+          </div>
+          <div class="flex gap-3 ml-16">
+            <span class="px-3 py-1 bg-cyan-500/20 text-cyan-300 rounded-full text-sm">ESP-Hosted</span>
+            <span class="px-3 py-1 bg-cyan-500/20 text-cyan-300 rounded-full text-sm">SDIO通信</span>
+            <span class="px-3 py-1 bg-cyan-500/20 text-cyan-300 rounded-full text-sm">断点续传</span>
+          </div>
+        </div>
+        
+        <!-- 感知与控制层 -->
+        <div class="card-glass p-6 border-l-4 border-green-500" id="arch-edge">
+          <div class="flex items-center gap-4 mb-3">
+            <div class="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center text-2xl">🔧</div>
+            <div>
+              <h3 class="text-white text-2xl font-bold">感知与控制层</h3>
+              <p class="text-green-400">ESP32-P4双核RISC-V · FreeRTOS多任务调度</p>
+            </div>
+          </div>
+          <div class="flex gap-3 ml-16 flex-wrap">
+            <span class="px-3 py-1 bg-green-500/20 text-green-300 rounded-full text-sm">MIPI摄像头</span>
+            <span class="px-3 py-1 bg-green-500/20 text-green-300 rounded-full text-sm">YOLO食材识别</span>
+            <span class="px-3 py-1 bg-green-500/20 text-green-300 rounded-full text-sm">压力传感器</span>
+            <span class="px-3 py-1 bg-green-500/20 text-green-300 rounded-full text-sm">LightGBM营养预测</span>
+            <span class="px-3 py-1 bg-green-500/20 text-green-300 rounded-full text-sm">触控LCD屏</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 场景4: 硬件端演示 (37-62s) -->
+    <div id="scene-hardware" class="clip absolute inset-0 gradient-bg tech-grid"
+         data-start="37" data-duration="25" data-track-index="0">
+      <div class="scene-label">硬件演示</div>
+      
+      <div class="absolute top-24 left-24">
+        <h2 class="text-white text-5xl font-black mb-4 glow-text" id="hw-title">边缘智能终端</h2>
+        <p class="text-blue-400 text-xl" id="hw-subtitle">ESP32-P4 · 端侧AI推理 · 离线可用</p>
+      </div>
+      
+      <div class="absolute top-48 right-24 w-[700px]">
+        <div class="card-glass p-8 floating" id="hw-device">
+          <div class="aspect-[4/3] bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl flex items-center justify-center mb-6 relative overflow-hidden">
+            <div class="absolute inset-0 tech-grid opacity-30"></div>
+            <div class="text-center z-10">
+              <div class="text-8xl mb-4">⚖️</div>
+              <div class="text-white text-2xl font-bold">智能称重终端</div>
+              <div class="text-gray-400 mt-2">ESP32-P4 双核 400MHz</div>
+            </div>
+            <div class="absolute top-4 right-4 w-4 h-4 bg-green-500 rounded-full pulse-ring"></div>
+            <div class="absolute top-4 right-4 w-4 h-4 bg-green-500 rounded-full"></div>
+          </div>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-black/30 rounded-lg p-4 text-center">
+              <div class="text-3xl mb-2">📷</div>
+              <div class="text-white font-semibold">OV5647摄像头</div>
+              <div class="text-gray-400 text-sm">500万像素 MIPI-CSI</div>
+            </div>
+            <div class="bg-black/30 rounded-lg p-4 text-center">
+              <div class="text-3xl mb-2">🎯</div>
+              <div class="text-white font-semibold">HX711 ADC</div>
+              <div class="text-gray-400 text-sm">24位高精度</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="absolute bottom-32 left-24 w-[800px]">
+        <div class="card-glass p-6 mb-4" id="hw-spec1">
+          <div class="flex items-center gap-4">
+            <div class="w-16 h-16 rounded-full bg-blue-500/20 flex items-center justify-center text-3xl">🧠</div>
+            <div>
+              <h4 class="text-white text-xl font-bold">ESP-DL YOLO11n 推理</h4>
+              <p class="text-gray-400">INT8量化 · 神经网络加速器 · 31种食材实时识别</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="card-glass p-6 mb-4" id="hw-spec2">
+          <div class="flex items-center gap-4">
+            <div class="w-16 h-16 rounded-full bg-green-500/20 flex items-center justify-center text-3xl">🌳</div>
+            <div>
+              <h4 class="text-white text-xl font-bold">11个LightGBM营养模型</h4>
+              <p class="text-gray-400">平均R²达0.9385 · 考虑7种烹饪方式 · 毫秒级预测</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="card-glass p-6 border-l-4 border-green-500" id="hw-spec3">
+          <div class="flex items-center gap-4">
+            <div class="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center text-3xl">📶</div>
+            <div>
+              <h4 class="text-white text-xl font-bold">离线独立运行</h4>
+              <p class="text-gray-400">全链路在设备端完成 · 无网络也可正常使用 · 数据暂存PSRAM待补传</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 场景5: 食材识别与营养计算演示 (62-87s) -->
+    <div id="scene-demo" class="clip absolute inset-0 gradient-bg tech-grid"
+         data-start="62" data-duration="25" data-track-index="0">
+      <div class="scene-label">功能演示</div>
+      
+      <div class="absolute top-24 left-1/2 -translate-x-1/2 text-center">
+        <h2 class="text-white text-5xl font-black mb-4 glow-text" id="demo-title">食材识别 · 营养计算</h2>
+        <p class="text-blue-400 text-xl" id="demo-subtitle">放上去 → 自动识别 → 选做法 → 毫秒级出结果</p>
+      </div>
+      
+      <div class="absolute top-48 left-24 right-24 bottom-24 flex items-center gap-8">
+        <!-- 左侧：识别过程 -->
+        <div class="flex-1">
+          <div class="card-glass p-6 mb-6" id="demo-step1">
+            <div class="flex items-center gap-4 mb-4">
+              <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">1</div>
+              <h3 class="text-white text-2xl font-bold">放置食材 · 自动识别</h3>
+            </div>
+            <div class="aspect-video bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg flex items-center justify-center relative overflow-hidden">
+              <div class="text-center">
+                <div class="text-6xl mb-3">🥗</div>
+                <div class="text-white text-lg">检测中...</div>
+                <div class="flex gap-2 justify-center mt-3">
+                  <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0s"></div>
+                  <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                  <div class="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                </div>
+              </div>
+              <div class="absolute inset-0 border-2 border-blue-500/50 rounded-lg m-4 corner-markers"></div>
+            </div>
+          </div>
+          
+          <div class="card-glass p-6" id="demo-step2">
+            <div class="flex items-center gap-4 mb-4">
+              <div class="w-10 h-10 rounded-full bg-green-500 text-white flex items-center justify-center font-bold">2</div>
+              <h3 class="text-white text-2xl font-bold">选择烹饪方式</h3>
+            </div>
+            <div class="flex gap-3 flex-wrap">
+              <div class="px-4 py-2 bg-green-500/30 border border-green-500 text-green-300 rounded-lg">🥘 炒</div>
+              <div class="px-4 py-2 bg-white/10 text-gray-300 rounded-lg">🍲 煮</div>
+              <div class="px-4 py-2 bg-white/10 text-gray-300 rounded-lg">🥘 炖</div>
+              <div class="px-4 py-2 bg-white/10 text-gray-300 rounded-lg">🍳 煎</div>
+              <div class="px-4 py-2 bg-white/10 text-gray-300 rounded-lg">🍖 烤</div>
+              <div class="px-4 py-2 bg-white/10 text-gray-300 rounded-lg">🍤 炸</div>
+              <div class="px-4 py-2 bg-white/10 text-gray-300 rounded-lg">🥗 蒸</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 右侧：营养结果 -->
+        <div class="flex-1">
+          <div class="card-glass p-6 h-full" id="demo-result">
+            <div class="flex items-center gap-4 mb-6">
+              <div class="w-10 h-10 rounded-full bg-purple-500 text-white flex items-center justify-center font-bold">✓</div>
+              <h3 class="text-white text-2xl font-bold">营养分析结果</h3>
+            </div>
+            
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <span class="text-gray-300">热量</span>
+                <div class="flex items-center gap-3">
+                  <div class="w-40 h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-orange-500 rounded-full" style="width: 65%"></div>
+                  </div>
+                  <span class="text-white font-bold w-24 text-right">486 kcal</span>
+                </div>
+              </div>
+              
+              <div class="flex items-center justify-between">
+                <span class="text-gray-300">蛋白质</span>
+                <div class="flex items-center gap-3">
+                  <div class="w-40 h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-blue-500 rounded-full" style="width: 45%"></div>
+                  </div>
+                  <span class="text-white font-bold w-24 text-right">28.3 g</span>
+                </div>
+              </div>
+              
+              <div class="flex items-center justify-between">
+                <span class="text-gray-300">脂肪</span>
+                <div class="flex items-center gap-3">
+                  <div class="w-40 h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-yellow-500 rounded-full" style="width: 38%"></div>
+                  </div>
+                  <span class="text-white font-bold w-24 text-right">18.6 g</span>
+                </div>
+              </div>
+              
+              <div class="flex items-center justify-between">
+                <span class="text-gray-300">碳水化合物</span>
+                <div class="flex items-center gap-3">
+                  <div class="w-40 h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-green-500 rounded-full" style="width: 55%"></div>
+                  </div>
+                  <span class="text-white font-bold w-24 text-right">52.1 g</span>
+                </div>
+              </div>
+              
+              <div class="flex items-center justify-between">
+                <span class="text-gray-300">钠</span>
+                <div class="flex items-center gap-3">
+                  <div class="w-40 h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div class="h-full bg-red-500 rounded-full" style="width: 30%"></div>
+                  </div>
+                  <span class="text-white font-bold w-24 text-right">612 mg</span>
+                </div>
+              </div>
+              
+              <div class="grid grid-cols-3 gap-3 mt-6 pt-6 border-t border-white/10">
+                <div class="text-center">
+                  <div class="text-cyan-400 text-2xl font-bold">31</div>
+                  <div class="text-gray-400 text-sm">食材种类</div>
+                </div>
+                <div class="text-center">
+                  <div class="text-purple-400 text-2xl font-bold">11</div>
+                  <div class="text-gray-400 text-sm">营养指标</div>
+                </div>
+                <div class="text-center">
+                  <div class="text-green-400 text-2xl font-bold">&lt;50ms</div>
+                  <div class="text-gray-400 text-sm">预测耗时</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 场景6: 云端与软件功能 (87-117s) -->
+    <div id="scene-software" class="clip absolute inset-0 gradient-bg tech-grid"
+         data-start="87" data-duration="30" data-track-index="0">
+      <div class="scene-label">云端软件</div>
+      
+      <div class="absolute top-24 left-24">
+        <h2 class="text-white text-5xl font-black mb-4 glow-text" id="sw-title">多端应用 · 云端智能</h2>
+        <p class="text-blue-400 text-xl" id="sw-subtitle">Web管理端 + 移动端APP · 数据同步 · 全面掌控</p>
+      </div>
+      
+      <div class="absolute top-48 left-24 right-24 bottom-24 grid grid-cols-2 gap-8">
+        <!-- 左侧：仪表盘 -->
+        <div class="card-glass p-6" id="sw-dashboard">
+          <h3 class="text-white text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="text-3xl">📊</span> 营养仪表盘
+          </h3>
+          
+          <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="bg-black/30 rounded-lg p-4">
+              <div class="text-gray-400 text-sm mb-1">今日摄入</div>
+              <div class="text-white text-3xl font-bold">1,847 <span class="text-base text-gray-400">kcal</span></div>
+              <div class="text-green-400 text-sm mt-1">↓ 比昨日少 8%</div>
+            </div>
+            <div class="bg-black/30 rounded-lg p-4">
+              <div class="text-gray-400 text-sm mb-1">本周达标率</div>
+              <div class="text-white text-3xl font-bold">78%</div>
+              <div class="w-full h-2 bg-gray-700 rounded-full mt-2">
+                <div class="h-full bg-gradient-to-r from-blue-500 to-green-500 rounded-full" style="width: 78%"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-black/30 rounded-lg p-4 mb-4">
+            <div class="text-gray-400 text-sm mb-3">七日能量趋势</div>
+            <div class="flex items-end justify-between h-24 gap-2">
+              <div class="flex-1 bg-blue-500/30 rounded-t" style="height: 60%"></div>
+              <div class="flex-1 bg-blue-500/40 rounded-t" style="height: 75%"></div>
+              <div class="flex-1 bg-blue-500/50 rounded-t" style="height: 65%"></div>
+              <div class="flex-1 bg-blue-500/60 rounded-t" style="height: 80%"></div>
+              <div class="flex-1 bg-blue-500/70 rounded-t" style="height: 70%"></div>
+              <div class="flex-1 bg-blue-500/80 rounded-t" style="height: 55%"></div>
+              <div class="flex-1 bg-blue-500 rounded-t" style="height: 45%"></div>
+            </div>
+            <div class="flex justify-between text-xs text-gray-500 mt-2">
+              <span>周一</span><span>周二</span><span>周三</span><span>周四</span><span>周五</span><span>周六</span><span>今日</span>
+            </div>
+          </div>
+          
+          <div class="bg-black/30 rounded-lg p-4">
+            <div class="text-gray-400 text-sm mb-3">宏量营养素占比</div>
+            <div class="flex items-center gap-6">
+              <div class="w-24 h-24 rounded-full border-8 border-orange-500/30 relative" style="border-top-color: #f97316; border-right-color: #3b82f6; border-bottom-color: #22c55e;">
+                <div class="absolute inset-2 rounded-full bg-gray-900 flex items-center justify-center">
+                  <span class="text-white text-xs">100%</span>
+                </div>
+              </div>
+              <div class="flex-1 space-y-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-3 h-3 rounded-full bg-orange-500"></div>
+                  <span class="text-gray-300 text-sm">碳水 52%</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div class="w-3 h-3 rounded-full bg-blue-500"></div>
+                  <span class="text-gray-300 text-sm">蛋白质 23%</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                  <span class="text-gray-300 text-sm">脂肪 25%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 右侧：功能卡片 -->
+        <div class="space-y-4">
+          <div class="card-glass p-6" id="sw-feature1">
+            <div class="flex items-start gap-4">
+              <div class="text-4xl">📝</div>
+              <div>
+                <h4 class="text-white text-xl font-bold mb-2">多粒度AI营养报告</h4>
+                <p class="text-gray-400">日/周/月/年四个维度自动生成，包含饮食评估、趋势对比和可操作改进建议</p>
+                <div class="flex gap-2 mt-3">
+                  <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded text-xs">每日凌晨</span>
+                  <span class="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs">每周批量</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="card-glass p-6" id="sw-feature2">
+            <div class="flex items-start gap-4">
+              <div class="text-4xl">🔍</div>
+              <div>
+                <h4 class="text-white text-xl font-bold mb-2">RAG增强健康建议</h4>
+                <p class="text-gray-400">营养摘要向量化存入pgvector，检索最相似历史案例，大模型输出500-800字个性化报告</p>
+                <div class="flex gap-2 mt-3">
+                  <span class="px-2 py-1 bg-cyan-500/20 text-cyan-300 rounded text-xs">pgvector</span>
+                  <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded text-xs">1536维向量</span>
+                  <span class="px-2 py-1 bg-yellow-500/20 text-yellow-300 rounded text-xs">语义检索</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="card-glass p-6" id="sw-feature3">
+            <div class="flex items-start gap-4">
+              <div class="text-4xl">💬</div>
+              <div>
+                <h4 class="text-white text-xl font-bold mb-2">双模式AI对话助手</h4>
+                <p class="text-gray-400">快速模式首字延迟&lt;1秒，专家模式深度分析；支持图片/文档多模态解析，打字机流式输出</p>
+                <div class="flex gap-2 mt-3">
+                  <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded text-xs">⚡ 快速模式</span>
+                  <span class="px-2 py-1 bg-purple-500/20 text-purple-300 rounded text-xs">🧠 专家模式</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="card-glass p-6 border-l-4 border-yellow-500" id="sw-feature4">
+            <div class="flex items-start gap-4">
+              <div class="text-4xl">📦</div>
+              <div>
+                <h4 class="text-white text-xl font-bold mb-2">四层时序数据分层归档</h4>
+                <p class="text-gray-400">原始→日度→周度→月度→年度，逐层聚合；7年以上数据秒级查询，永久保留完整趋势</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 场景7: AI功能深度展示 (117-137s) -->
+    <div id="scene-ai" class="clip absolute inset-0 gradient-bg tech-grid"
+         data-start="117" data-duration="20" data-track-index="0">
+      <div class="scene-label">AI智能</div>
+      
+      <div class="absolute top-24 left-1/2 -translate-x-1/2 text-center">
+        <h2 class="text-white text-5xl font-black mb-4 glow-text" id="ai-title">RAG增强 · 千人千面</h2>
+        <p class="text-blue-400 text-xl" id="ai-subtitle">从通用回答到基于个人历史的精准指导</p>
+      </div>
+      
+      <div class="absolute top-48 left-24 right-24 bottom-24 flex items-center">
+        <!-- RAG流程 -->
+        <div class="flex-1">
+          <div class="card-glass p-8" id="ai-pipeline">
+            <h3 class="text-white text-2xl font-bold mb-8 text-center">RAG四阶段管道</h3>
+            
+            <div class="space-y-6">
+              <div class="flex items-center gap-4" id="ai-step1">
+                <div class="w-14 h-14 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold text-xl shrink-0">1</div>
+                <div class="flex-1">
+                  <h4 class="text-white text-lg font-bold">向量化</h4>
+                  <p class="text-gray-400 text-sm">营养摘要Embedding为1536维向量，存入pgvector索引</p>
+                </div>
+                <div class="text-3xl">📥</div>
+              </div>
+              
+              <div class="flex items-center gap-4" id="ai-step2">
+                <div class="w-14 h-14 rounded-full bg-purple-500 text-white flex items-center justify-center font-bold text-xl shrink-0">2</div>
+                <div class="flex-1">
+                  <h4 class="text-white text-lg font-bold">检索</h4>
+                  <p class="text-gray-400 text-sm">语义相似度匹配Top-5历史案例作为Few-shot参考</p>
+                </div>
+                <div class="text-3xl">🔍</div>
+              </div>
+              
+              <div class="flex items-center gap-4" id="ai-step3">
+                <div class="w-14 h-14 rounded-full bg-cyan-500 text-white flex items-center justify-center font-bold text-xl shrink-0">3</div>
+                <div class="flex-1">
+                  <h4 class="text-white text-lg font-bold">增强</h4>
+                  <p class="text-gray-400 text-sm">历史案例 + 当前数据 + 用户健康画像注入上下文</p>
+                </div>
+                <div class="text-3xl">⚡</div>
+              </div>
+              
+              <div class="flex items-center gap-4" id="ai-step4">
+                <div class="w-14 h-14 rounded-full bg-green-500 text-white flex items-center justify-center font-bold text-xl shrink-0">4</div>
+                <div class="flex-1">
+                  <h4 class="text-white text-lg font-bold">生成</h4>
+                  <p class="text-gray-400 text-sm">调用大模型产出既专业又个性化的营养建议报告</p>
+                </div>
+                <div class="text-3xl">✨</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 效果对比 -->
+        <div class="w-[500px] ml-8 space-y-4">
+          <div class="card-glass p-6 opacity-50" id="ai-before">
+            <div class="text-gray-500 text-sm mb-2">❌ 传统通用回答</div>
+            <p class="text-gray-400 text-sm leading-relaxed">"建议您均衡饮食，多吃蔬菜水果，控制油脂摄入..."</p>
+          </div>
+          
+          <div class="text-center text-2xl text-gray-500">↓</div>
+          
+          <div class="card-glass p-6 border-l-4 border-green-500" id="ai-after">
+            <div class="text-green-400 text-sm mb-2">✅ RAG个性化建议</div>
+            <p class="text-white text-sm leading-relaxed">"根据您过去30天的饮食记录，您的钠摄入量平均超标23%，建议本周优先选择清蒸做法..."</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 场景8: 创新点与总结 (137-150s) -->
+    <div id="scene-summary" class="clip absolute inset-0 gradient-bg tech-grid"
+         data-start="137" data-duration="13" data-track-index="0">
+      <div class="scene-label">总结</div>
+      
+      <div class="absolute top-24 left-1/2 -translate-x-1/2 text-center">
+        <h2 class="text-white text-5xl font-black mb-4 glow-text" id="sum-title">核心创新点</h2>
+      </div>
+      
+      <div class="absolute top-48 left-24 right-24 grid grid-cols-2 gap-6">
+        <div class="card-glass p-6" id="sum-1">
+          <div class="flex items-start gap-4">
+            <div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold text-xl shrink-0">1</div>
+            <div>
+              <h4 class="text-white text-xl font-bold mb-2">RAG + 饮食健康管理</h4>
+              <p class="text-gray-400">构建"向量化-检索-增强-生成"四阶段个性化管道，AI建议从通用变精准</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="card-glass p-6" id="sum-2">
+          <div class="flex items-start gap-4">
+            <div class="w-12 h-12 rounded-full bg-gradient-to-br from-green-500 to-cyan-500 flex items-center justify-center text-white font-bold text-xl shrink-0">2</div>
+            <div>
+              <h4 class="text-white text-xl font-bold mb-2">四层时序数据分层归档</h4>
+              <p class="text-gray-400">单表PostgreSQL中实现数据仓库分层聚合金字塔，年级别数据秒级查询</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="card-glass p-6" id="sum-3">
+          <div class="flex items-start gap-4">
+            <div class="w-12 h-12 rounded-full bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center text-white font-bold text-xl shrink-0">3</div>
+            <div>
+              <h4 class="text-white text-xl font-bold mb-2">双引擎协同架构</h4>
+              <p class="text-gray-400">边缘YOLO+LightGBM实时感知，云端RAG+大模型深度分析，各擅其长</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="card-glass p-6" id="sum-4">
+          <div class="flex items-start gap-4">
+            <div class="w-12 h-12 rounded-full bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center text-white font-bold text-xl shrink-0">4</div>
+            <div>
+              <h4 class="text-white text-xl font-bold mb-2">pgvector统一数据库</h4>
+              <p class="text-gray-400">单数据库同时承载OLTP和向量检索，摒弃业务库+向量库的复杂架构</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="absolute bottom-24 left-1/2 -translate-x-1/2 text-center">
+        <div class="accent-line h-1 w-96 mx-auto rounded-full mb-6" id="sum-line"></div>
+        <h3 class="text-white text-4xl font-black glow-text" id="sum-end">智能饮食健康秤</h3>
+        <p class="text-blue-400 text-xl mt-3" id="sum-tag">让每一餐都看得见 · 让健康管理更简单</p>
+      </div>
+    </div>
+    
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      
+      // 场景1: 封面 (0-2s)
+      tl.from("#cover-subtitle", { opacity: 0, y: -20, duration: 0.5 }, 0);
+      tl.from("#cover-title", { opacity: 0, scale: 0.8, duration: 0.6 }, 0.2);
+      tl.from("#cover-line", { width: 0, duration: 0.5 }, 0.6);
+      tl.from("#cover-year", { opacity: 0, y: 20, duration: 0.5 }, 0.8);
+      tl.to("#scene-cover", { opacity: 0, duration: 0.3 }, 1.7);
+      
+      // 场景2: 痛点介绍 (2-17s)
+      tl.from("#intro-title", { opacity: 0, x: -50, duration: 0.6 }, 2.2);
+      tl.from("#intro-subtitle", { opacity: 0, x: -50, duration: 0.5 }, 2.5);
+      tl.from("#pain-1", { opacity: 0, y: 30, duration: 0.5 }, 3.2);
+      tl.from("#pain-2", { opacity: 0, y: 30, duration: 0.5 }, 3.5);
+      tl.from("#pain-3", { opacity: 0, y: 30, duration: 0.5 }, 3.8);
+      tl.from("#solution", { opacity: 0, scale: 0.95, duration: 0.6 }, 5);
+      tl.to("#scene-intro", { opacity: 0, duration: 0.5 }, 16);
+      
+      // 场景3: 架构 (17-37s)
+      tl.from("#arch-title", { opacity: 0, y: -30, duration: 0.6 }, 17.3);
+      tl.from("#arch-app", { opacity: 0, x: -50, duration: 0.5 }, 18);
+      tl.from("#arch-cloud", { opacity: 0, x: -50, duration: 0.5 }, 18.5);
+      tl.from("#arch-net", { opacity: 0, x: -50, duration: 0.5 }, 19);
+      tl.from("#arch-edge", { opacity: 0, x: -50, duration: 0.5 }, 19.5);
+      tl.to("#scene-arch", { opacity: 0, duration: 0.5 }, 36);
+      
+      // 场景4: 硬件 (37-62s)
+      tl.from("#hw-title", { opacity: 0, x: -50, duration: 0.6 }, 37.3);
+      tl.from("#hw-subtitle", { opacity: 0, x: -50, duration: 0.5 }, 37.6);
+      tl.from("#hw-device", { opacity: 0, x: 50, scale: 0.9, duration: 0.7 }, 38.2);
+      tl.from("#hw-spec1", { opacity: 0, x: -30, duration: 0.5 }, 39);
+      tl.from("#hw-spec2", { opacity: 0, x: -30, duration: 0.5 }, 39.5);
+      tl.from("#hw-spec3", { opacity: 0, x: -30, duration: 0.5 }, 40);
+      tl.to("#scene-hardware", { opacity: 0, duration: 0.5 }, 61);
+      
+      // 场景5: 演示 (62-87s)
+      tl.from("#demo-title", { opacity: 0, y: -30, duration: 0.6 }, 62.3);
+      tl.from("#demo-subtitle", { opacity: 0, y: -20, duration: 0.5 }, 62.6);
+      tl.from("#demo-step1", { opacity: 0, x: -40, duration: 0.6 }, 63.2);
+      tl.from("#demo-step2", { opacity: 0, x: -40, duration: 0.5 }, 64);
+      tl.from("#demo-result", { opacity: 0, x: 40, duration: 0.7 }, 64.5);
+      tl.to("#scene-demo", { opacity: 0, duration: 0.5 }, 86);
+      
+      // 场景6: 软件 (87-117s)
+      tl.from("#sw-title", { opacity: 0, x: -50, duration: 0.6 }, 87.3);
+      tl.from("#sw-subtitle", { opacity: 0, x: -50, duration: 0.5 }, 87.6);
+      tl.from("#sw-dashboard", { opacity: 0, y: 30, duration: 0.6 }, 88.2);
+      tl.from("#sw-feature1", { opacity: 0, x: 30, duration: 0.5 }, 88.5);
+      tl.from("#sw-feature2", { opacity: 0, x: 30, duration: 0.5 }, 89);
+      tl.from("#sw-feature3", { opacity: 0, x: 30, duration: 0.5 }, 89.5);
+      tl.from("#sw-feature4", { opacity: 0, x: 30, duration: 0.5 }, 90);
+      tl.to("#scene-software", { opacity: 0, duration: 0.5 }, 116);
+      
+      // 场景7: AI (117-137s)
+      tl.from("#ai-title", { opacity: 0, y: -30, duration: 0.6 }, 117.3);
+      tl.from("#ai-subtitle", { opacity: 0, y: -20, duration: 0.5 }, 117.6);
+      tl.from("#ai-pipeline", { opacity: 0, x: -40, duration: 0.6 }, 118.3);
+      tl.from("#ai-step1", { opacity: 0, x: -20, duration: 0.4 }, 118.8);
+      tl.from("#ai-step2", { opacity: 0, x: -20, duration: 0.4 }, 119.3);
+      tl.from("#ai-step3", { opacity: 0, x: -20, duration: 0.4 }, 119.8);
+      tl.from("#ai-step4", { opacity: 0, x: -20, duration: 0.4 }, 120.3);
+      tl.from("#ai-before", { opacity: 0, x: 30, duration: 0.4 }, 120);
+      tl.from("#ai-after", { opacity: 0, x: 30, duration: 0.5 }, 120.8);
+      tl.to("#scene-ai", { opacity: 0, duration: 0.5 }, 136);
+      
+      // 场景8: 总结 (137-150s)
+      tl.from("#sum-title", { opacity: 0, y: -30, duration: 0.6 }, 137.3);
+      tl.from("#sum-1", { opacity: 0, y: 30, duration: 0.5 }, 138);
+      tl.from("#sum-2", { opacity: 0, y: 30, duration: 0.5 }, 138.3);
+      tl.from("#sum-3", { opacity: 0, y: 30, duration: 0.5 }, 138.6);
+      tl.from("#sum-4", { opacity: 0, y: 30, duration: 0.5 }, 138.9);
+      tl.from("#sum-line", { width: 0, duration: 0.6 }, 141);
+      tl.from("#sum-end", { opacity: 0, scale: 0.8, duration: 0.6 }, 141.3);
+      tl.from("#sum-tag", { opacity: 0, y: 20, duration: 0.5 }, 141.8);
+      
+      window.__timelines = window.__timelines || {};
+      window.__timelines["smart-scale"] = tl;
+    </script>
+  </div>
+</body>
+</html>
