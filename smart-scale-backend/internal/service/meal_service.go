@@ -61,9 +61,9 @@ func (s *MealService) RecordWeighIn(ctx context.Context, userID int, req *model.
 	return record, nil
 }
 
-// GetHistoryRecords 获取历史记录（分页）
-func (s *MealService) GetHistoryRecords(ctx context.Context, userID int, page, pageSize int, startDate, endDate string) (*model.PaginatedRecords, error) {
-	records, total, err := s.mealRepo.QueryWeighRecords(ctx, userID, page, pageSize, startDate, endDate)
+// GetHistoryRecords 获取历史记录（分页+搜索）
+func (s *MealService) GetHistoryRecords(ctx context.Context, userID int, page, pageSize int, startDate, endDate, search string) (*model.PaginatedRecords, error) {
+	records, total, err := s.mealRepo.QueryWeighRecords(ctx, userID, page, pageSize, startDate, endDate, search)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query records: %w", err)
 	}
@@ -202,4 +202,8 @@ func (s *MealService) UpdateWeighRecord(ctx context.Context, id int64, req *mode
 // DeleteWeighRecord 删除称重记录
 func (s *MealService) DeleteWeighRecord(ctx context.Context, id int64) error {
 	return s.mealRepo.DeleteWeighRecord(ctx, id)
+}
+
+func (s *MealService) DeleteWeighRecordsBatch(ctx context.Context, ids []int64) (int64, error) {
+	return s.mealRepo.DeleteWeighRecordsBatch(ctx, ids)
 }

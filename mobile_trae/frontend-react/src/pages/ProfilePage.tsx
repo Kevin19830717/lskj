@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input"
 import { apiGet, apiPut, type UserProfile, type CompanionStats } from "@/lib/api"
 import { AnimatedNumber } from "@/components/fx"
 import { RecentMealsList } from "@/pages/DashboardPage"
-import { LoaderCircle, Save, User, Sparkles, X, Pencil, Heart, Activity, Award, Utensils, CalendarDays, Flame, ChefHat } from "lucide-react"
+import { LoaderCircle, Save, User, Sparkles, X, Pencil, Heart, Activity, Award, Utensils, CalendarDays, Flame, ChefHat, LogOut } from "lucide-react"
 import { WaveLoader } from "@/components/wave-loader"
+import { useNavigate } from "react-router-dom"
 
 const goalLabels: Record<string, string> = {
   lose_weight: "减脂", gain_weight: "增重", maintain: "保持体重",
@@ -27,6 +28,7 @@ function getStoredUser() {
 }
 
 export default function ProfilePage() {
+  const navigate = useNavigate()
   const sessionUser = getStoredUser()
   const [nickname, setNickname] = useState(sessionUser.nickname || "")
   const [phone, setPhone] = useState(sessionUser.phone || "")
@@ -248,6 +250,21 @@ export default function ProfilePage() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* ===== 退出登录按钮（手机端可见） ===== */}
+      <div className="mt-3 lg:mt-5 flex justify-center lg:hidden">
+        <button
+          onClick={() => {
+            localStorage.removeItem("token")
+            localStorage.removeItem("user")
+            navigate("/")
+          }}
+          className="flex items-center gap-1.5 rounded-xl bg-red-50 hover:bg-red-100 px-5 py-2.5 text-sm font-medium text-red-600 transition-all duration-300 border border-red-200"
+        >
+          <LogOut className="h-4 w-4" />
+          退出登录
+        </button>
       </div>
 
       {/* ===== 编辑信息弹窗 ===== */}

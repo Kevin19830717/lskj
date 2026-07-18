@@ -153,6 +153,19 @@ const quickQuestions = [
   { icon: "🥦", text: "素食者如何均衡营养？" },
 ]
 
+// ===== 模块级变量：SSE 流不绑定组件生命周期，SPA 内切换页面不中断 =====
+let _bgAbortController: AbortController | null = null
+let _bgFullText = ""
+let _bgFullThinking = ""
+let _bgRunning = false
+
+// 模块级回调：组件挂载时注册，从后台流推送 UI 更新
+type StreamCB = (msg: { type: "thinking" | "text" | "thinking_end" | "done" | "error"; data?: string }) => void
+let _streamCB: StreamCB | null = null
+function _emit(msg: { type: "thinking" | "text" | "thinking_end" | "done" | "error"; data?: string }) {
+  if (_streamCB) _streamCB(msg)
+}
+
 export default function AIChatPage() {
   const [messages, setMessages] = useState<ChatMsg[]>([WELCOME_MSG])
   const [input, setInput] = useState("")
@@ -171,13 +184,17 @@ export default function AIChatPage() {
   }, [mode])
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const isFirstRender = useRef(true)
 
-  // 加载历史聊天记录
+  // 加载历史聊天记录（如果后台 SSE 正在跑则跳过，避免覆盖实时流状态）
   useEffect(() => {
     let cancelled = false
     async function loadHistory() {
+      // 方案B：后台流正在跑时，不加载数据库历史（数据还没落库，加载的是旧的）
+      if (_bgRunning) {
+        if (!cancelled) setHistoryLoaded(true)
+        return
+      }
       try {
         const res = await apiGet<{ history: ChatMsg[] }>("/ai/chat/history")
         if (!cancelled && res.code === 0 && res.data?.history?.length) {
@@ -190,15 +207,13 @@ export default function AIChatPage() {
             }
             return msg
           })
-          // 若最后一条是孤立的用户消息（中途退出），删除它，不清除上下文让用户手动重问
+          // 若最后一条是孤立的用户消息（后台流未在跑但消息不完整），提示用户重发
           const last = parsed[parsed.length - 1]
           if (last && last.role === "user") {
             const trimmed = parsed.slice(0, -1)
             setMessages(trimmed)
             setHistoryLoaded(true)
-            // 后端删除孤立的用户消息
             try { await apiPost("/ai/chat/delete-last-user") } catch { /* 忽略 */ }
-            // 不自动重发，追加一条提示让用户手动重新提问
             trimmed.push({ role: "assistant", content: "⏳ 上次对话中断，请重新发送您的问题。" })
             setMessages(trimmed)
             return
@@ -215,6 +230,114 @@ export default function AIChatPage() {
     }
     loadHistory()
     return () => { cancelled = true }
+  }, [])
+
+  // ===== 方案B：注册模块级回调 + 检查后台流 =====
+  useEffect(() => {
+    // 注册回调：后台 SSE 有数据时推送给当前组件实例
+    _streamCB = (msg) => {
+      if (msg.type === "thinking") {
+        setThinking(true)
+        setMessages((prev) => {
+          const next = [...prev]
+          const last = next[next.length - 1]
+          if (last && last.role === "assistant") {
+            next[next.length - 1] = { role: "assistant", content: "", thinking: _bgFullThinking, thinkingDone: false }
+          }
+          return next
+        })
+      } else if (msg.type === "thinking_end") {
+        setMessages((prev) => {
+          const next = [...prev]
+          const last = next[next.length - 1]
+          if (last && last.role === "assistant") {
+            next[next.length - 1] = { ...last, thinkingDone: true }
+          }
+          return next
+        })
+      } else if (msg.type === "text") {
+        setThinking(false)
+        setMessages((prev) => {
+          const next = [...prev]
+          const last = next[next.length - 1]
+          if (last && last.role === "assistant") {
+            next[next.length - 1] = { ...last, content: _bgFullText, thinking: _bgFullThinking || undefined, thinkingDone: true }
+          }
+          return next
+        })
+      } else if (msg.type === "done") {
+        setThinking(false)
+        setLoading(false)
+      } else if (msg.type === "error") {
+        setThinking(false)
+        setLoading(false)
+        setMessages((prev) => {
+          const next = [...prev]
+          const last = next[next.length - 1]
+          if (last && last.role === "assistant" && !last.content) {
+            next[next.length - 1] = { role: "assistant", content: msg.data || "请求失败" }
+          }
+          return next
+        })
+      }
+    }
+
+    // 组件重新挂载时：如果后台流在跑，重建完整的消息列表（历史 + 当前流状态）
+    if (_bgRunning) {
+      setLoading(true)
+      setThinking(_bgFullText === "")
+      // 从数据库加载历史，然后追加当前正在生成的 assistant 消息
+      ;(async () => {
+        try {
+          const res = await apiGet<{ history: ChatMsg[] }>("/ai/chat/history")
+          if (res.code === 0 && res.data?.history?.length) {
+            const parsed = res.data.history.map((msg) => {
+              if (msg.role === "user") {
+                const { images } = parseImageMarkers(msg.content)
+                return images.length > 0 ? { ...msg, images } : msg
+              }
+              return msg
+            })
+            // 最后一条如果是孤立的 user（后台流触发的），追加当前 assistant 状态
+            const last = parsed[parsed.length - 1]
+            if (last && last.role === "user") {
+              parsed.push({
+                role: "assistant",
+                content: _bgFullText,
+                thinking: _bgFullThinking || undefined,
+                thinkingDone: _bgFullText ? true : false,
+              })
+            } else if (last && last.role === "assistant" && !last.content && _bgFullText) {
+              // 最后一条是空的 assistant 占位，用当前流内容替换
+              parsed[parsed.length - 1] = {
+                role: "assistant",
+                content: _bgFullText,
+                thinking: _bgFullThinking || undefined,
+                thinkingDone: true,
+              }
+            }
+            setMessages(parsed)
+          } else {
+            // 没有历史，创建一个占位 assistant 消息
+            setMessages([
+              { role: "user", content: "..." },
+              {
+                role: "assistant",
+                content: _bgFullText,
+                thinking: _bgFullThinking || undefined,
+                thinkingDone: _bgFullText ? true : false,
+              },
+            ])
+          }
+        } catch {
+          // 忽略
+        }
+      })()
+    }
+
+    return () => {
+      _streamCB = null
+    }
   }, [])
 
   // 滚动到底部：用 useLayoutEffect 在浏览器绘制前同步设置，避免"从顶滑到底"
@@ -306,11 +429,17 @@ export default function AIChatPage() {
     // 专家模式立即显示"正在深度思考"占位符，避免十秒空窗期
     setThinking(mode === "expert")
 
-    const controller = new AbortController()
-    abortRef.current = controller
+    // ===== 方案B：模块级 AbortController，组件卸载不中断 SSE =====
+    // 如果上一个流还在跑，先 abort（防止并发冲突）
+    if (_bgAbortController) {
+      _bgAbortController.abort()
+    }
+    _bgAbortController = new AbortController()
+    _bgFullText = ""
+    _bgFullThinking = ""
+    _bgRunning = true
 
-    let fullText = ""
-    let fullThinking = ""
+    const controller = _bgAbortController
 
     try {
       const token = localStorage.getItem("token") || ""
@@ -350,89 +479,58 @@ export default function AIChatPage() {
           try {
             const data = JSON.parse(dataStr)
             if (data.thinking_delta) {
-              // 专家模式：真实深度思考文字
-              if (!thinking) setThinking(true)
-              fullThinking += data.thinking_delta
-              setMessages((prev) => {
-                const next = [...prev]
-                next[next.length - 1] = { role: "assistant", content: "", thinking: fullThinking, thinkingDone: false }
-                return next
-              })
+              _bgFullThinking += data.thinking_delta
+              _emit({ type: "thinking", data: data.thinking_delta })
             }
             if (data.thinking_end) {
-              // 思考结束，标记完成，触发折叠动画
-              setMessages((prev) => {
-                const next = [...prev]
-                const last = next[next.length - 1]
-                if (last.role === "assistant") {
-                  next[next.length - 1] = { ...last, thinkingDone: true }
-                }
-                return next
-              })
+              _emit({ type: "thinking_end" })
             }
             if (data.delta) {
-              fullText += data.delta
-              if (thinking) setThinking(false)
-              setMessages((prev) => {
-                const next = [...prev]
-                next[next.length - 1] = { role: "assistant", content: fullText, thinking: fullThinking || undefined }
-                return next
-              })
+              _bgFullText += data.delta
+              _emit({ type: "text", data: data.delta })
             } else if (data.error) {
-              fullText = fullText || `抱歉，出了一点小问题：${data.error}`
-              setThinking(false)
-              setMessages((prev) => {
-                const next = [...prev]
-                next[next.length - 1] = { role: "assistant", content: fullText }
-                return next
-              })
+              _bgFullText = _bgFullText || `抱歉，出了一点小问题：${data.error}`
+              _emit({ type: "error", data: _bgFullText })
             } else if (data.done) {
-              setThinking(false)
-              if (!fullText && !fullThinking) {
-                setMessages((prev) => {
-                  const next = [...prev]
-                  next[next.length - 1] = { role: "assistant", content: "（回复为空，请重试）" }
-                  return next
-                })
-              }
+              _emit({ type: "done" })
             }
           } catch {
             // skip invalid JSON
           }
         }
       }
+
+      // SSE 正常结束
+      _bgRunning = false
+      _emit({ type: "done" })
+
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        // 用户切页面中断流式：保存已收到的部分内容，避免数据库出现孤立 user 消息
-        if (fullText) {
-          try {
-            await apiPost("/ai/chat/save-interrupted", { message: content, reply: fullText })
-          } catch { /* 忽略 */ }
-        }
+        // 用户主动点"重置"才 abort，这里只是标记后台流结束
+        _bgRunning = false
         return
       }
-      setMessages((prev) => {
-        const next = [...prev]
-        const last = next[next.length - 1]
-        if (last && last.role === "assistant" && !last.content) {
-          next[next.length - 1] = { role: "assistant", content: "网络连接失败，请检查网络后重试 🙏" }
-        } else {
-          next.push({ role: "assistant", content: "网络连接失败，请检查网络后重试 🙏" })
-        }
-        return next
-      })
+      // 网络错误：如果后台流还在跑（组件已卸载），忽略 UI 更新
+      _bgRunning = false
+      _emit({ type: "error", data: "网络连接失败，请检查网络后重试" })
     } finally {
+      _bgAbortController = null
+      // 组件还在的话更新 loading 状态
       setLoading(false)
       setThinking(false)
-      abortRef.current = null
       inputRef.current?.focus()
     }
   }
 
   const resetChat = async () => {
-    if (loading && abortRef.current) {
-      abortRef.current.abort()
+    // 方案B：用模块级 abort 停止后台流
+    if (_bgAbortController) {
+      _bgAbortController.abort()
+      _bgAbortController = null
     }
+    _bgRunning = false
+    _bgFullText = ""
+    _bgFullThinking = ""
     setMessages([WELCOME_MSG])
     setLoading(false)
     setThinking(false)

@@ -44,7 +44,7 @@ func NewSummaryService(
 	}
 }
 
-// GenerateSummary 生成营养分析摘要
+// GenerateSummary 生成营养分析摘要（日报无记录不生成，周/月/年未满周期不生成）
 func (s *SummaryService) GenerateSummary(ctx context.Context, userID int, summaryType string) (*model.AnalysisSummary, error) {
 	now := time.Now()
 	var periodStart, periodEnd time.Time
@@ -62,28 +62,84 @@ func (s *SummaryService) GenerateSummary(ctx context.Context, userID int, summar
 		periodStart = time.Date(now.Year(), now.Month(), now.Day()-daysSinceMonday, 0, 0, 0, 0, now.Location())
 		periodEnd = periodStart.AddDate(0, 0, 7)
 		summaryDate = periodStart
+		// 周报：周期必须已完整结束
+		if !isPeriodComplete(periodEndInclusive(periodStart, "weekly")) {
+			return nil, fmt.Errorf("当前周尚未结束，无法生成周报")
+		}
+		// 必须要有完整的7天日报
+		dailyCount := s.countDailyInRange(ctx, userID, periodStart, periodEnd)
+		if dailyCount < 7 {
+			return nil, fmt.Errorf("本周仅有 %d 天日报，不足7天，无法生成周报", dailyCount)
+		}
 	case "monthly":
 		periodStart = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		periodEnd = periodStart.AddDate(0, 1, 0)
 		summaryDate = periodStart
+		// 月报：周期必须已完整结束
+		if !isPeriodComplete(periodEndInclusive(periodStart, "monthly")) {
+			return nil, fmt.Errorf("当前月尚未结束，无法生成月报")
+		}
+		// 必须要有完整月份的周报
+		weeklyCount := s.countSummaryInRange(ctx, userID, "weekly", periodStart, periodEnd)
+		expectedWeeks := s.expectedWeeksInMonth(periodStart)
+		if weeklyCount < expectedWeeks {
+			return nil, fmt.Errorf("本月仅有 %d 份周报，不足 %d 份，无法生成月报", weeklyCount, expectedWeeks)
+		}
 	case "yearly":
 		periodStart = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location())
 		periodEnd = periodStart.AddDate(1, 0, 0)
 		summaryDate = periodStart
+		// 年报：周期必须已完整结束
+		if !isPeriodComplete(periodEndInclusive(periodStart, "yearly")) {
+			return nil, fmt.Errorf("当前年尚未结束，无法生成年报")
+		}
+		// 必须要有完整的12份月报
+		monthlyCount := s.countSummaryInRange(ctx, userID, "monthly", periodStart, periodEnd)
+		if monthlyCount < 12 {
+			return nil, fmt.Errorf("本年仅有 %d 份月报，不足12份，无法生成年报", monthlyCount)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported summary type: %s", summaryType)
 	}
 
-	// 获取时间范围内的称重记录
-	records, err := s.mealRepo.QueryRecordsByDateRange(ctx, userID, periodStart, periodEnd)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query records: %w", err)
+	// 日报：当天无记录则不生成
+	if summaryType == "daily" {
+		records, err := s.mealRepo.QueryRecordsByDateRange(ctx, userID, periodStart, periodEnd)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query records: %w", err)
+		}
+		if len(records) == 0 {
+			return nil, fmt.Errorf("当天无餐食记录，无法生成日报")
+		}
+		insights := s.buildInsights(ctx, records, periodStart, periodEnd, summaryType)
+		summary := &model.AnalysisSummary{
+			UserID:      userID,
+			SummaryDate: summaryDate,
+			SummaryType: summaryType,
+			Source:      "manual",
+			Insights:    insights,
+		}
+		if err := s.summaryRepo.Create(ctx, summary); err != nil {
+			return nil, fmt.Errorf("failed to save summary: %w", err)
+		}
+		s.saveEmbeddingAsync(userID, summary, insights, len(records))
+		return summary, nil
 	}
 
-	// 构建摘要洞察数据
-	insights := s.buildInsights(ctx, records, periodStart, periodEnd, summaryType)
+	// 周/月/年报：从下级报告聚合
+	subType := map[string]string{"weekly": "daily", "monthly": "weekly", "yearly": "monthly"}[summaryType]
+	subReports, err := s.summaryRepo.FindByDateRange(ctx, userID, subType, periodStart, periodEnd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query %s summaries: %w", subType, err)
+	}
+	if len(subReports) == 0 {
+		return nil, fmt.Errorf("无%s报告可聚合，无法生成%s", subType, summaryType)
+	}
 
-	// 创建摘要对象
+	insights := s.mergeInsights(ctx, subReports, summaryType)
+	insights["period_start"] = periodStart.Format("2006-01-02")
+	insights["period_end"] = periodEndInclusive(periodStart, summaryType).Format("2006-01-02")
+
 	summary := &model.AnalysisSummary{
 		UserID:      userID,
 		SummaryDate: summaryDate,
@@ -91,16 +147,19 @@ func (s *SummaryService) GenerateSummary(ctx context.Context, userID int, summar
 		Source:      "manual",
 		Insights:    insights,
 	}
-
-	// 保存到数据库
 	if err := s.summaryRepo.Create(ctx, summary); err != nil {
 		return nil, fmt.Errorf("failed to save summary: %w", err)
 	}
 
-	// 异步向量化并存储嵌入（用于RAG检索）
+	s.saveEmbeddingAsync(userID, summary, insights, len(subReports))
+	return summary, nil
+}
+
+// saveEmbeddingAsync 异步保存向量嵌入
+func (s *SummaryService) saveEmbeddingAsync(userID int, summary *model.AnalysisSummary, insights map[string]interface{}, recordCount int) {
 	go func() {
 		bgCtx := context.Background()
-		contentText := s.formatSummaryAsText(userID, insights, summaryType)
+		contentText := s.formatSummaryAsText(userID, insights, summary.SummaryType, summary.SummaryDate)
 		embedding, embErr := s.embeddingSvc.GenerateEmbedding(contentText)
 		if embErr != nil {
 			logrus.WithError(embErr).Warn("Failed to generate embedding for summary")
@@ -109,25 +168,58 @@ func (s *SummaryService) GenerateSummary(ctx context.Context, userID int, summar
 
 		emb := &model.UserHealthEmbedding{
 			UserID:      userID,
-			SourceType:  summaryType + "_summary",
-			SourceDate:  summaryDate,
+			SourceType:  summary.SummaryType + "_summary",
+			SourceDate:  summary.SummaryDate,
 			ContentText: contentText,
 			Embedding:   embedding,
 			Metadata: map[string]interface{}{
-				"type":           summaryType,
-				"record_count":   len(records),
-				"total_energy":   insights["total_energy_kcal"],
-				"generated_at":   time.Now().Format(time.RFC3339),
+				"type":         summary.SummaryType,
+				"record_count": recordCount,
+				"total_energy": insights["total_energy_kcal"],
+				"generated_at": time.Now().Format(time.RFC3339),
 			},
 		}
 		if embErr := s.embedRepo.Save(bgCtx, emb); embErr != nil {
 			logrus.WithError(embErr).Warn("Failed to save summary embedding")
 		} else {
-			logrus.Infof("Saved embedding for %s summary of user %d", summaryType, userID)
+			logrus.Infof("Saved embedding for %s summary of user %d", summary.SummaryType, userID)
 		}
 	}()
+}
 
-	return summary, nil
+// countDailyInRange 计算指定日期范围内的日报数量
+func (s *SummaryService) countDailyInRange(ctx context.Context, userID int, start, end time.Time) int {
+	count, err := s.summaryRepo.CountByDateRange(ctx, userID, "daily", start, end)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+// countSummaryInRange 计算指定日期范围内的某类报告数量
+func (s *SummaryService) countSummaryInRange(ctx context.Context, userID int, summaryType string, start, end time.Time) int {
+	count, err := s.summaryRepo.CountByDateRange(ctx, userID, summaryType, start, end)
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+// expectedWeeksInMonth 计算某个月应该有几周（基于该月的周一数）
+func (s *SummaryService) expectedWeeksInMonth(monthStart time.Time) int {
+	monthEnd := monthStart.AddDate(0, 1, -1)
+	firstMonday := monthStart
+	for firstMonday.Weekday() != time.Monday {
+		firstMonday = firstMonday.AddDate(0, 0, 1)
+	}
+	lastMonday := monthEnd
+	for lastMonday.Weekday() != time.Monday {
+		lastMonday = lastMonday.AddDate(0, 0, -1)
+	}
+	if lastMonday.Before(firstMonday) {
+		return 0
+	}
+	return int(lastMonday.Sub(firstMonday).Hours()/24/7) + 1
 }
 
 // buildInsights 从称重记录构建洞察数据
@@ -227,9 +319,12 @@ func (s *SummaryService) buildInsights(ctx context.Context, records []*model.Wei
 }
 
 // formatSummaryAsText 将摘要格式化为文本用于向量化
-func (s *SummaryService) formatSummaryAsText(userID int, insights map[string]interface{}, summaryType string) string {
+func (s *SummaryService) formatSummaryAsText(userID int, insights map[string]interface{}, summaryType string, summaryDate time.Time) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("【%s营养分析摘要】用户%d\n", summaryType, userID))
+
+	// 生成友好标签：2025年3月月报、2025年年报、2025年第12周周报
+	label := formatSummaryLabel(summaryDate, summaryType)
+	sb.WriteString(fmt.Sprintf("【%s】用户%d\n", label, userID))
 	sb.WriteString(fmt.Sprintf("时间段: %s ~ %s\n", insights["period_start"], insights["period_end"]))
 	sb.WriteString(fmt.Sprintf("餐次总数: %d\n", insights["total_meals"]))
 	if e, ok := insights["total_energy_kcal"].(float64); ok {
@@ -258,6 +353,27 @@ func (s *SummaryService) formatSummaryAsText(userID int, insights map[string]int
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// formatSummaryLabel 生成人类可读的报告标签
+func formatSummaryLabel(date time.Time, summaryType string) string {
+	year := date.Year()
+	month := date.Month()
+
+	switch summaryType {
+	case "yearly":
+		return fmt.Sprintf("%d年", year)
+	case "monthly":
+		return fmt.Sprintf("%d年%d月", year, int(month))
+	case "weekly":
+		// 周报显示日期区间：2026-07-06~2026-07-12
+		weekEnd := date.AddDate(0, 0, 6)
+		return fmt.Sprintf("%s~%s", date.Format("2006-01-02"), weekEnd.Format("2006-01-02"))
+	case "daily":
+		return fmt.Sprintf("%d年%d月%d日", year, int(month), date.Day())
+	default:
+		return fmt.Sprintf("%s(%s)", summaryType, date.Format("2006-01-02"))
+	}
 }
 
 // generateRecommendations 基于营养数据的简单建议
@@ -315,6 +431,11 @@ func (s *SummaryService) GetSummariesPaged(ctx context.Context, userID int, summ
 // DeleteAllSummaries 清除用户全部报告（测试用）
 func (s *SummaryService) DeleteAllSummaries(ctx context.Context, userID int) (int64, error) {
 	return s.summaryRepo.DeleteAllByUser(ctx, userID)
+}
+
+// DeleteAllByType 清除用户指定类型报告
+func (s *SummaryService) DeleteAllByType(ctx context.Context, userID int, summaryType string) (int64, error) {
+	return s.summaryRepo.DeleteAllByUserType(ctx, userID, summaryType)
 }
 
 // RunArchiveJob 分层归档任务
@@ -785,7 +906,7 @@ func (s *SummaryService) GenerateNextMissingSummary(ctx context.Context, userID 
 	}
 }
 
-// generateNextMissingWeekly 生成最旧的缺失周报（跳过未满7天的不完整周期）
+// generateNextMissingWeekly 生成最旧的缺失周报（跳过未满7天日报的不完整周期）
 func (s *SummaryService) generateNextMissingWeekly(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
 	oldest, err := s.mealRepo.GetOldestRecordDate(ctx, userID)
 	if err != nil || oldest == nil {
@@ -800,7 +921,8 @@ func (s *SummaryService) generateNextMissingWeekly(ctx context.Context, userID i
 			continue // 周期未结束，跳过避免数据失真
 		}
 		dailies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "daily", ws, weekEnd)
-		if len(dailies) == 0 {
+		// 必须满7天日报
+		if len(dailies) < 7 {
 			continue
 		}
 
@@ -819,7 +941,7 @@ func (s *SummaryService) generateNextMissingWeekly(ctx context.Context, userID i
 	return nil, nil
 }
 
-// generateNextMissingMonthly 生成最旧的缺失月报（跳过未满月的不完整周期）
+// generateNextMissingMonthly 生成最旧的缺失月报（跳过未满月周报的不完整周期）
 func (s *SummaryService) generateNextMissingMonthly(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
 	oldest, err := s.mealRepo.GetOldestRecordDate(ctx, userID)
 	if err != nil || oldest == nil {
@@ -833,7 +955,9 @@ func (s *SummaryService) generateNextMissingMonthly(ctx context.Context, userID 
 			continue
 		}
 		weeklies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "weekly", ms, monthEnd)
-		if len(weeklies) == 0 {
+		// 必须满完整周报数
+		expectedWeeks := s.expectedWeeksInMonth(ms)
+		if len(weeklies) < expectedWeeks {
 			continue
 		}
 
@@ -852,7 +976,7 @@ func (s *SummaryService) generateNextMissingMonthly(ctx context.Context, userID 
 	return nil, nil
 }
 
-// generateNextMissingYearly 生成最旧的缺失年报（跳过未满年的不完整周期）
+// generateNextMissingYearly 生成最旧的缺失年报（跳过未满12个月报的不完整周期）
 func (s *SummaryService) generateNextMissingYearly(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
 	oldest, err := s.mealRepo.GetOldestRecordDate(ctx, userID)
 	if err != nil || oldest == nil {
@@ -866,7 +990,8 @@ func (s *SummaryService) generateNextMissingYearly(ctx context.Context, userID i
 			continue
 		}
 		monthlies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "monthly", ys, yearEnd)
-		if len(monthlies) == 0 {
+		// 必须满12份月报
+		if len(monthlies) < 12 {
 			continue
 		}
 
@@ -929,7 +1054,13 @@ func (s *SummaryService) GenerateNextMissingSummaryWithAI(ctx context.Context, u
 	// Step 3: 生成AI总结
 	aiSummary, aiAdvice, err := s.generateAISummaryForReport(ctx, userID, target)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to generate AI summary: %w", err)
+		// AI 总结生成失败，但报告数据本身已经存在，返回报告但标记错误
+		logrus.WithError(err).Warnf("Failed to generate AI summary for user %d %s report %s, returning report without AI summary",
+			userID, summaryType, target.SummaryDate.Format("2006-01-02"))
+		target.Insights["ai_summary"] = ""
+		target.Insights["ai_advice"] = ""
+		_ = s.summaryRepo.UpdateByID(ctx, target.ID, target.Insights)
+		return target, "ai_failed", nil
 	}
 
 	// Step 4: 将AI总结写入insights并更新
@@ -1272,13 +1403,18 @@ func (s *SummaryService) GenerateDailyForDate(ctx context.Context, userID int, d
 	return summary, nil
 }
 
-// GenerateWeeklySummary 根据本周日度摘要聚合生成周报
-// 从本周一的日报中聚合，如果已存在则跳过
+// GenerateWeeklySummary 根据本周日度摘要聚合生成周报（本周必须已结束且有完整7天日报）
 func (s *SummaryService) GenerateWeeklySummary(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
 	now := time.Now()
 	weekday := now.Weekday()
 	daysSinceMonday := (int(weekday) + 6) % 7
 	weekStart := time.Date(now.Year(), now.Month(), now.Day()-daysSinceMonday, 0, 0, 0, 0, now.Location())
+	weekEnd := periodEndInclusive(weekStart, "weekly")
+
+	// 周期必须已完整结束
+	if !isPeriodComplete(weekEnd) {
+		return nil, nil
+	}
 
 	// 检查是否已存在
 	existing, _ := s.summaryRepo.FindByUserDateType(ctx, userID, weekStart, "weekly")
@@ -1286,18 +1422,16 @@ func (s *SummaryService) GenerateWeeklySummary(ctx context.Context, userID int) 
 		return existing, nil
 	}
 
-	// 查本周已有的日报
-	weekEnd := periodEndInclusive(weekStart, "weekly")
+	// 查本周已有的日报，必须满7天
 	dailySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "daily", weekStart, weekEnd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query daily summaries: %w", err)
 	}
-	if len(dailySummaries) == 0 {
-		return nil, nil // 本周无日报，不生成空周报
+	if len(dailySummaries) < 7 {
+		return nil, nil // 不足7天日报，不生成
 	}
 
 	mergedInsights := s.mergeInsights(ctx, dailySummaries, "weekly")
-	// 强制使用完整周范围（周一~周日），不管是否有日报缺漏
 	mergedInsights["period_start"] = weekStart.Format("2006-01-02")
 	mergedInsights["period_end"] = weekEnd.Format("2006-01-02")
 	summary := &model.AnalysisSummary{
@@ -1315,27 +1449,32 @@ func (s *SummaryService) GenerateWeeklySummary(ctx context.Context, userID int) 
 	return summary, nil
 }
 
-// GenerateMonthlySummary 根据本月周度摘要聚合生成月报
+// GenerateMonthlySummary 根据本月周度摘要聚合生成月报（本月必须已结束且有完整周报）
 func (s *SummaryService) GenerateMonthlySummary(ctx context.Context, userID int) (*model.AnalysisSummary, error) {
 	now := time.Now()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	monthEnd := periodEndInclusive(monthStart, "monthly")
+
+	// 周期必须已完整结束
+	if !isPeriodComplete(monthEnd) {
+		return nil, nil
+	}
 
 	existing, _ := s.summaryRepo.FindByUserDateType(ctx, userID, monthStart, "monthly")
 	if existing != nil {
 		return existing, nil
 	}
 
-	monthEnd := periodEndInclusive(monthStart, "monthly")
 	weeklySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "weekly", monthStart, monthEnd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query weekly summaries: %w", err)
 	}
-	if len(weeklySummaries) == 0 {
-		return nil, nil
+	expectedWeeks := s.expectedWeeksInMonth(monthStart)
+	if len(weeklySummaries) < expectedWeeks {
+		return nil, nil // 不足完整周报数，不生成
 	}
 
 	mergedInsights := s.mergeInsights(ctx, weeklySummaries, "monthly")
-	// 强制使用整月范围
 	mergedInsights["period_start"] = monthStart.Format("2006-01-02")
 	mergedInsights["period_end"] = monthEnd.Format("2006-01-02")
 	summary := &model.AnalysisSummary{
@@ -1422,13 +1561,21 @@ func (s *SummaryService) BackfillSummaries(ctx context.Context, userID int, star
 			continue
 		}
 
-		weekEnd := weekStart.AddDate(0, 0, 7)
-		dailySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "daily", weekStart, weekEnd)
-		if err != nil || len(dailySummaries) == 0 {
+		weekEndIncl := periodEndInclusive(weekStart, "weekly")
+		// 周期必须已完整结束
+		if !isPeriodComplete(weekEndIncl) {
+			continue
+		}
+
+		// 查该周日报，必须满7天
+		dailySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "daily", weekStart, weekStart.AddDate(0, 0, 7))
+		if err != nil || len(dailySummaries) < 7 {
 			continue
 		}
 
 		mergedInsights := s.mergeInsights(ctx, dailySummaries, "weekly")
+		mergedInsights["period_start"] = weekStart.Format("2006-01-02")
+		mergedInsights["period_end"] = weekEndIncl.Format("2006-01-02")
 		wSummary := &model.AnalysisSummary{
 			UserID:      userID,
 			SummaryDate: weekStart,
@@ -1473,8 +1620,13 @@ func (s *SummaryService) IncrementalBackfill(ctx context.Context, userID int) (*
 	weekStarts, _ := s.summaryRepo.GetWeekStartsWithoutWeeklySummary(ctx, userID, *oldest, maxWeekly)
 	for _, ws := range weekStarts {
 		weekEnd := periodEndInclusive(ws, "weekly")
+		// 周期必须已完整结束
+		if !isPeriodComplete(weekEnd) {
+			continue
+		}
 		dailies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "daily", ws, weekEnd)
-		if len(dailies) == 0 {
+		// 必须满7天日报
+		if len(dailies) < 7 {
 			continue
 		}
 		merged := s.mergeInsights(ctx, dailies, "weekly")
@@ -1493,8 +1645,14 @@ func (s *SummaryService) IncrementalBackfill(ctx context.Context, userID int) (*
 	monthStarts, _ := s.summaryRepo.GetMonthStartsWithoutMonthlySummary(ctx, userID, *oldest, maxMonthly)
 	for _, ms := range monthStarts {
 		monthEnd := periodEndInclusive(ms, "monthly")
+		// 周期必须已完整结束
+		if !isPeriodComplete(monthEnd) {
+			continue
+		}
 		weeklies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "weekly", ms, monthEnd)
-		if len(weeklies) == 0 {
+		// 必须满完整周报数
+		expectedWeeks := s.expectedWeeksInMonth(ms)
+		if len(weeklies) < expectedWeeks {
 			continue
 		}
 		merged := s.mergeInsights(ctx, weeklies, "monthly")
@@ -1513,8 +1671,13 @@ func (s *SummaryService) IncrementalBackfill(ctx context.Context, userID int) (*
 	yearStarts, _ := s.summaryRepo.GetYearStartsWithoutYearlySummary(ctx, userID, *oldest, maxYearly)
 	for _, ys := range yearStarts {
 		yearEnd := periodEndInclusive(ys, "yearly")
+		// 周期必须已完整结束
+		if !isPeriodComplete(yearEnd) {
+			continue
+		}
 		monthlies, _ := s.summaryRepo.FindByDateRange(ctx, userID, "monthly", ys, yearEnd)
-		if len(monthlies) == 0 {
+		// 必须满12份月报
+		if len(monthlies) < 12 {
 			continue
 		}
 		merged := s.mergeInsights(ctx, monthlies, "yearly")

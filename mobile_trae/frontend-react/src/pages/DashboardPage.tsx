@@ -163,11 +163,11 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
     }))
   }, [stats, days])
 
-  // 桌面端标签间隔：数据少时全部显示，多时约8个
+  // 桌面端标签间隔：每 4 天显示一个标签（统一规律，不特殊处理最后一天）
   const labelInterval = useMemo(() => {
     if (chartData.length <= 7) return 1
     if (chartData.length <= 15) return 2
-    return Math.ceil(chartData.length / 8)
+    return 4
   }, [chartData.length])
 
   const totalKcal = chartData.reduce((a, b) => a + b.value, 0)
@@ -287,11 +287,11 @@ function ActivityChartCard({ stats, days }: { stats: DashboardStats | null; days
                 </span>
               </div>
             )}
-            {/* 桌面端日期标签 — 约8个详细标签，hidden默认 + lg:flex显示 */}
+            {/* 桌面端日期标签 — 4天间隔，统一规律不特殊处理最后一天 */}
             <div className="hidden lg:flex justify-between gap-1.5 mt-2 lg:flex-shrink-0">
               {chartData.map((item, index) => (
                 <div key={`desk-${days}-${index}`} className="flex-1 min-w-0 text-center">
-                  {(index % labelInterval === 0 || index === chartData.length - 1) ? (
+                  {index % labelInterval === 0 ? (
                     <span className="text-xs text-muted-foreground truncate block">
                       {item.day}
                     </span>

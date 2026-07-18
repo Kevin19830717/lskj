@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"smart-scale-backend/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 type MealHandler struct {
@@ -52,14 +55,21 @@ func (h *MealHandler) RecordWeighInTest(c *gin.Context) {
 		}
 	}
 
+	// 调试：记录 ESP32 原始请求体（读完需重新塞回以供后续绑定）
+	raw, _ := io.ReadAll(c.Request.Body)
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(raw))
+	logrus.Infof("[ESP32] user_id=%d raw body: %s", userID, string(raw))
+
 	var req model.WeighInRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logrus.Warnf("[ESP32] bind failed: %v", err)
 		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request: "+err.Error()))
 		return
 	}
 
 	record, err := h.mealService.RecordWeighIn(c.Request.Context(), int(userID), &req)
 	if err != nil {
+		logrus.Warnf("[ESP32] RecordWeighIn failed: %v, body=%s", err, string(raw))
 		c.JSON(http.StatusBadRequest, model.ErrorResp(400, err.Error()))
 		return
 	}
@@ -68,7 +78,7 @@ func (h *MealHandler) RecordWeighInTest(c *gin.Context) {
 }
 
 // GetHistoryRecords 查询历史称重记录
-// GET /api/v1/records?page=&page_size=&start_date=&end_date=
+// GET /api/v1/records?page=&page_size=&start_date=&end_date=&search=
 func (h *MealHandler) GetHistoryRecords(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 
@@ -77,6 +87,7 @@ func (h *MealHandler) GetHistoryRecords(c *gin.Context) {
 		PageSize:  20,
 		StartDate: c.Query("start_date"),
 		EndDate:   c.Query("end_date"),
+		Search:    c.Query("search"),
 	}
 
 	if pageStr := c.DefaultQuery("page", "1"); pageStr != "" {
@@ -97,6 +108,7 @@ func (h *MealHandler) GetHistoryRecords(c *gin.Context) {
 		query.PageSize,
 		query.StartDate,
 		query.EndDate,
+		query.Search,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to query records"))
@@ -168,4 +180,24 @@ func (h *MealHandler) DeleteWeighRecord(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.Success(nil))
+}
+
+// BatchDeleteWeighRecords 批量删除称重记录
+// DELETE /api/v1/records/batch
+func (h *MealHandler) BatchDeleteWeighRecords(c *gin.Context) {
+	var req struct {
+		IDs []int64 `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "请求参数错误: ids 数组不能为空"))
+		return
+	}
+
+	count, err := h.mealService.DeleteWeighRecordsBatch(c.Request.Context(), req.IDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.SuccessWithMessage("批量删除成功", gin.H{"deleted": count}))
 }

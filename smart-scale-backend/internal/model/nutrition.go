@@ -72,6 +72,7 @@ type RecordsQuery struct {
 	PageSize  int    `form:"page_size" binding:"omitempty,min=1,max=100"`
 	StartDate string `form:"start_date"` // YYYY-MM-DD
 	EndDate   string `form:"end_date"`   // YYYY-MM-DD
+	Search    string `form:"search"`     // 食材名称/烹饪方式搜索
 }
 
 // PaginatedRecords 分页记录结果

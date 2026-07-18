@@ -58,10 +58,11 @@ const (
 	CookRoast    CookingMethod = "roast"     // 烤(4)
 	CookSteam    CookingMethod = "steam"     // 蒸(5)
 	CookStirFry  CookingMethod = "stir_fry"  // 炒(6)
+	CookRaw      CookingMethod = "raw"       // 生食(7)
 )
 
 // CookingMethods 所有支持的烹饪方式
-var CookingMethods = []CookingMethod{CookBoil, CookBraise, CookDeepFry, CookPanFry, CookRoast, CookSteam, CookStirFry}
+var CookingMethods = []CookingMethod{CookBoil, CookBraise, CookDeepFry, CookPanFry, CookRoast, CookSteam, CookStirFry, CookRaw}
 
 // CookingMethodLabels 烹饪方式中文标签
 var CookingMethodLabels = map[CookingMethod]string{
@@ -72,6 +73,7 @@ var CookingMethodLabels = map[CookingMethod]string{
 	CookRoast:   "烤",
 	CookSteam:   "蒸",
 	CookStirFry: "炒",
+	CookRaw:     "生食",
 }
 
 // CookingLossRates 各烹饪方式的营养保留率（相对于生食）

@@ -192,6 +192,18 @@ func (r *SummaryRepository) CountByType(ctx context.Context, userID int, summary
 	return count, nil
 }
 
+// CountByDateRange 统计指定日期范围内某类型摘要数量
+func (r *SummaryRepository) CountByDateRange(ctx context.Context, userID int, summaryType string, start, end time.Time) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM user_analysis_summaries 
+	          WHERE user_id = $1 AND summary_type = $2 AND summary_date >= $3 AND summary_date <= $4`
+	err := database.Pool.QueryRow(ctx, query, userID, summaryType, start, end).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count summaries by range: %w", err)
+	}
+	return count, nil
+}
+
 // DeleteBeforeDate 删除指定日期之前的原始级别摘要（用于归档升级）
 func (r *SummaryRepository) DeleteBeforeDate(ctx context.Context, userID int, summaryType string, beforeDate time.Time) (int64, error) {
 	query := `DELETE FROM user_analysis_summaries 

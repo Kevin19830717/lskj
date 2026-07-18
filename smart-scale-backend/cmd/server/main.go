@@ -298,6 +298,7 @@ func setupRoutes(
 	protected.GET("/records", mealH.GetHistoryRecords)
 	protected.PUT("/records/:id", mealH.UpdateWeighRecord)
 	protected.DELETE("/records/:id", mealH.DeleteWeighRecord)
+	protected.DELETE("/records/batch", mealH.BatchDeleteWeighRecords)
 	protected.GET("/daily-summary", mealH.GetDailySummary)
 
 	// 食物库

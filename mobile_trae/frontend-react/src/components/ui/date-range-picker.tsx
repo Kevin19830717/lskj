@@ -105,9 +105,9 @@ function JollyDateRangePicker<T extends AriaDateValue>({
         <Button variant="ghost" className="absolute inset-0 z-20 rounded-md !bg-transparent hover:!bg-transparent focus:!bg-transparent active:!bg-transparent data-[hovered]:!bg-transparent data-[pressed]:!bg-transparent data-[focus-visible]:!bg-transparent" aria-label="打开日期选择器">
           <span className="sr-only">日期</span>
         </Button>
-        <DateInput variant="ghost" slot={"start"} className="relative z-10 pointer-events-none" />
-        <span aria-hidden className="px-2 text-sm text-muted-foreground relative z-10 pointer-events-none">-</span>
-        <DateInput className="flex-1 relative z-10 pointer-events-none" variant="ghost" slot={"end"} />
+        <DateInput variant="ghost" slot={"start"} className="relative z-10 pointer-events-none !text-xs sm:!text-sm" />
+        <span aria-hidden className="px-1 text-xs text-muted-foreground relative z-10 pointer-events-none">-</span>
+        <DateInput className="flex-1 relative z-10 pointer-events-none !text-xs sm:!text-sm" variant="ghost" slot={"end"} />
         <CalendarIcon aria-hidden className="size-4 mr-2 relative z-10 pointer-events-none" />
       </FieldGroup>
       {description && <Text className="text-sm text-muted-foreground" slot="description">{description}</Text>}

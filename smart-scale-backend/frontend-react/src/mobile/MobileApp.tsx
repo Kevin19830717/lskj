@@ -126,6 +126,7 @@ const cookingOptions = [
   { value: "roast", label: "烤" },
   { value: "pan_fry", label: "煎" },
   { value: "deep_fry", label: "炸" },
+  { value: "raw", label: "生食" },
 ]
 
 const tabItems: Array<{ key: MobileTabKey; label: string; path: string; icon: ReactNode }> = [
@@ -219,6 +220,26 @@ function formatDate(dateStr?: string) {
     month: "2-digit",
     day: "2-digit",
   }).format(date)
+}
+function formatReportLabel(dateStr?: string, summaryType?: string) {
+  if (!dateStr) return "-"
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return dateStr
+  const y = d.getFullYear()
+  const m = d.getMonth() + 1
+  const day = d.getDate()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  switch (summaryType) {
+    case "yearly": return `${y}年`
+    case "monthly": return `${y}年${m}月`
+    case "weekly": {
+      const end = new Date(d)
+      end.setDate(end.getDate() + 6)
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}~${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`
+    }
+    case "daily": return `${y}年${m}月${day}日`
+    default: return formatDate(dateStr)
+  }
 }
 
 function formatMetric(value?: number | null, digits = 1) {
@@ -1013,7 +1034,7 @@ function MobileRecordsPage() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索食材或烹饪方式"
+              placeholder=""
               className="w-full bg-transparent text-[13px] outline-none placeholder:text-slate-400"
             />
           </div>
@@ -1255,6 +1276,7 @@ function MobileReportsPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [feedback, setFeedback] = useState("")
   const [selected, setSelected] = useState<AnalysisSummary | null>(null)
   const [detailTab, setDetailTab] = useState<"basic" | "foods" | "ai">("basic")
 
@@ -1272,14 +1294,24 @@ function MobileReportsPage() {
 
   const generateReport = async () => {
     setBusy(true)
-    await apiPost(`/summaries/generate-next?type=${type}`)
+    try {
+      const res = await apiPost<{ message?: string }>(`/summaries/generate-next?type=${type}`)
+      if (res.code !== 0) {
+        setFeedback(res.message || "生成失败")
+        setTimeout(() => setFeedback(""), 4000)
+      }
+    } catch {
+      setFeedback("生成失败，请检查网络")
+      setTimeout(() => setFeedback(""), 4000)
+    }
     setBusy(false)
     loadReports(type, page)
   }
 
   const clearReports = async () => {
     setClearing(true)
-    await apiDelete(type === "daily" ? "/summaries" : "/summaries?exclude_daily=true")
+    // 日报只删除日报，其他类型删除周/月/年报（保留日报）
+    await apiDelete(type === "daily" ? "/summaries?exclude_daily=false&types=daily" : "/summaries?exclude_daily=true")
     setClearing(false)
     setSelected(null)
     setPage(1)
@@ -1313,6 +1345,7 @@ function MobileReportsPage() {
             ))}
           </div>
           <div className="mt-2 flex gap-2">
+            {type !== "daily" && (
             <button
               type="button"
               onClick={generateReport}
@@ -1322,6 +1355,7 @@ function MobileReportsPage() {
               {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               生成
             </button>
+            )}
             <button
               type="button"
               onClick={clearReports}
@@ -1335,6 +1369,9 @@ function MobileReportsPage() {
         </SectionCard>
 
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          {feedback && (
+            <div className="mb-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs text-emerald-700">{feedback}</div>
+          )}
           <div className="space-y-2">
             {loading ? (
               <SectionCard className="flex items-center justify-center py-8 text-slate-400">
@@ -1359,7 +1396,7 @@ function MobileReportsPage() {
                         <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200/60 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(124,58,237,0.08))] px-2 py-1 text-[10px] font-semibold text-emerald-700">
                           {reportTypes.find((item) => item.key === report.summary_type)?.emoji} {reportTypeLabel(report.summary_type)}
                         </div>
-                        <div className="mt-1 text-[13px] font-semibold text-slate-900">{formatDate(report.summary_date)}</div>
+                        <div className="mt-1 text-[13px] font-semibold text-slate-900">{formatReportLabel(report.summary_date, report.summary_type)}</div>
                       </div>
                       <div className="rounded-2xl bg-slate-50 px-2.5 py-1.5 text-right">
                         <div className="text-[10px] text-slate-500">AI 总结</div>
@@ -1370,9 +1407,9 @@ function MobileReportsPage() {
                     </div>
                     <div className="mt-2 grid grid-cols-4 gap-1.5">
                       <TinyStat label="热量" value={Number(report.insights?.avg_daily_energy_kcal || report.insights?.total_energy_kcal || 0)} unit="kcal" color="#f97316" />
-                      <TinyStat label="蛋白" value={Number(report.insights?.total_protein_g || 0)} unit="g" color="#ec4899" />
-                      <TinyStat label="脂肪" value={Number(report.insights?.total_fat_g || 0)} unit="g" color="#f59e0b" />
-                      <TinyStat label="碳水" value={Number(report.insights?.total_carbohydrate_g || 0)} unit="g" color="#22c55e" />
+                      <TinyStat label="蛋白" value={Number(report.insights?.avg_daily_protein_g || report.insights?.total_protein_g || 0)} unit="g" color="#ec4899" />
+                      <TinyStat label="脂肪" value={Number(report.insights?.avg_daily_fat_g || report.insights?.total_fat_g || 0)} unit="g" color="#f59e0b" />
+                      <TinyStat label="碳水" value={Number(report.insights?.avg_daily_carbohydrate_g || report.insights?.total_carbohydrate_g || 0)} unit="g" color="#22c55e" />
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {(report.insights?.top_foods || []).slice(0, 3).map((food) => (
@@ -1419,7 +1456,7 @@ function MobileReportsPage() {
             <div className="space-y-3 text-[12px]">
               <SectionCard className="bg-slate-50">
                 <div className="text-[11px] text-slate-500">日期</div>
-                <div className="mt-1 font-semibold text-slate-900">{formatDate(selected.summary_date)}</div>
+                <div className="mt-1 font-semibold text-slate-900">{formatReportLabel(selected.summary_date, selected.summary_type)}</div>
               </SectionCard>
               <SectionCard>
                 <div className="mb-2 text-[12px] font-semibold text-slate-900">核心营养</div>

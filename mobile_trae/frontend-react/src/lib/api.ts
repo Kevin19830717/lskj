@@ -67,6 +67,17 @@ export async function apiDelete<T = unknown>(path: string): Promise<ApiResponse<
   return data
 }
 
+export async function apiDeleteWithBody<T = unknown>(path: string, body: unknown): Promise<ApiResponse<T>> {
+  const resp = await fetch(API_BASE + path, {
+    method: "DELETE",
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+  })
+  const data = (await resp.json()) as ApiResponse<T>
+  handleUnauthorized(resp.status, data)
+  return data
+}
+
 export async function apiUpload<T = unknown>(path: string, file: File, fieldName = "avatar"): Promise<ApiResponse<T>> {
   const formData = new FormData()
   formData.append(fieldName, file)

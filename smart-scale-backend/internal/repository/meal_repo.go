@@ -57,8 +57,8 @@ func (r *MealRepository) CreateWeighRecord(ctx context.Context, record *model.We
 	return nil
 }
 
-// QueryWeighRecords 查询称重记录（分页）
-func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page, pageSize int, startDate, endDate string) ([]*model.WeighRecord, int64, error) {
+// QueryWeighRecords 查询称重记录（分页+搜索）
+func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page, pageSize int, startDate, endDate, search string) ([]*model.WeighRecord, int64, error) {
 	var total int64
 	countParams := []interface{}{userID}
 	countWhere := "WHERE user_id = $1"
@@ -72,6 +72,20 @@ func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page
 	if endDate != "" {
 		countWhere += fmt.Sprintf(" AND created_at <= $%d", paramIdx)
 		countParams = append(countParams, endDate+"T23:59:59+08:00")
+		paramIdx++
+	}
+	// 搜索：匹配食材英文名(ingredients)、中文食物名(foods.name)、烹饪方式英文或中文标签
+	if search != "" {
+		countWhere += fmt.Sprintf(` AND (
+			ingredients::text ILIKE $%d
+			OR cooking_method ILIKE $%d
+			OR EXISTS (SELECT 1 FROM foods f WHERE f.name ILIKE $%d AND ingredients::jsonb ? f.name_en)
+			OR EXISTS (SELECT 1 FROM (VALUES
+				('boil','煮'),('braise','炖'),('deep_fry','炸'),('pan_fry','煎'),
+				('roast','烤'),('steam','蒸'),('stir_fry','炒'),('raw','生食')
+			) AS cm(en, zh) WHERE cm.zh ILIKE $%d AND cooking_method = cm.en)
+		)`, paramIdx, paramIdx, paramIdx, paramIdx)
+		countParams = append(countParams, "%"+search+"%")
 		paramIdx++
 	}
 
@@ -478,4 +492,16 @@ func (r *MealRepository) DeleteWeighRecord(ctx context.Context, id int64) error 
 		return fmt.Errorf("failed to delete weigh record: %w", err)
 	}
 	return nil
+}
+
+// DeleteWeighRecordsBatch 批量删除称重记录
+func (r *MealRepository) DeleteWeighRecordsBatch(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result, err := database.Pool.Exec(ctx, "DELETE FROM weigh_records WHERE id = ANY($1)", ids)
+	if err != nil {
+		return 0, fmt.Errorf("failed to batch delete weigh records: %w", err)
+	}
+	return result.RowsAffected(), nil
 }

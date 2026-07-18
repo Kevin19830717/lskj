@@ -67,7 +67,7 @@ async def create_embedding(req: EmbeddingRequest):
             results=[{
                 "text_index": i,
                 "text": req.texts[i] if i < len(req.texts) else "",
-                "embedding_dim": 1536 if embeddings_list else 0,
+                "embedding_dim": len(embeddings_list[0]) if embeddings_list else 0,
                 "success": True,
             } for i in range(len(embeddings_list))],
             stored_count=stored_count,
@@ -352,52 +352,71 @@ async def chat(req: ChatRequest):
     start_time = time.time()
 
     try:
+        # ===== 多模态支持：有图片时用 qwen3-omni-flash，无图片时用 qwen-plus =====
+        has_images = bool(req.images)
+        if has_images:
+            user_content = [{"type": "text", "text": req.message or "请分析这张图片"}]
+            for img_url in req.images:
+                user_content.append({"type": "image_url", "image_url": {"url": img_url}})
+        else:
+            user_content = req.message
+        chat_model = settings.OMNI_MODEL if has_images else settings.TEXT_MODEL
+
         if req.mode == "expert":
-            # 专家模式：加载完整上下文
-            prev_response_id = await _get_last_response_id(req.user_id)
+            # 专家模式：加载完整上下文；有图片时跳过 previous_response_id（跨模型记忆不兼容）
+            prev_response_id = await _get_last_response_id(req.user_id) if not has_images else None
             user_context = await _build_user_context(req.user_id)
             archived_summaries = await _get_archived_summaries(req.user_id, req.message)
             system_prompt = _get_chat_system_prompt(user_context, archived_summaries, mode="expert")
             messages = [{"role": "system", "content": system_prompt}]
             for h in req.history[-20:]:
                 messages.append({"role": h.role, "content": h.content})
-            messages.append({"role": "user", "content": req.message})
+            messages.append({"role": "user", "content": user_content})
             result = await call_responses_api(
                 messages=messages,
                 previous_response_id=prev_response_id,
+                model=chat_model,
                 temperature=0.5,
                 max_tokens=4096,
             )
-            new_response_id = result.get("response_id", "")
-            if new_response_id:
-                await _save_response_id(req.user_id, new_response_id)
+            if not has_images:
+                new_response_id = result.get("response_id", "")
+                if new_response_id:
+                    await _save_response_id(req.user_id, new_response_id)
         else:
-            # 快速模式：默认不加上下文，直接调用；但检测到时间关键词（如"2022年年报"）时注入归档数据
-            archived_summaries_fast = ""
-            if _match_time_keyword(req.message):
-                try:
-                    archived_summaries_fast = await _get_archived_summaries(req.user_id, req.message)
-                except Exception as e:
-                    logger.warning(f"Fast mode RAG retrieval failed: {e}")
+            # 快速模式：无条件走 RAG 检索 + 用户画像
+            import asyncio as _asyncio
+            user_context_fast, archived_summaries_fast = await _asyncio.gather(
+                _build_user_context(req.user_id),
+                _get_archived_summaries(req.user_id, req.message) if not has_images else _asyncio.sleep(0, result=""),
+            )
+            if not isinstance(archived_summaries_fast, str):
+                archived_summaries_fast = ""
 
-            if archived_summaries_fast:
-                sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n\n"
-                                "以下是用户的历史归档数据，请基于这些数据回答用户问题：\n"
+            if has_images:
+                sys_content = "你是智能饮食健康秤的AI助手。你具备视觉能力，可以查看和分析用户发送的图片。当用户消息中包含图片时，请直接描述和分析图片内容。用中文回答。"
+            elif archived_summaries_fast:
+                sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji，"
+                                "不要使用LaTeX公式(如$...$)，用中文文字表达计算。\n\n"
+                                f"## 用户信息\n{user_context_fast}\n\n"
+                                "## 历史归档数据\n"
                                 + archived_summaries_fast)
             else:
-                sys_content = "你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。"
+                sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，"
+                                "不要用emoji，不要使用LaTeX公式(如$...$)，用中文文字表达计算。")
             messages = [{"role": "system", "content": sys_content}]
             for h in req.history[-10:]:
                 messages.append({"role": h.role, "content": h.content})
-            messages.append({"role": "user", "content": req.message})
+            messages.append({"role": "user", "content": user_content})
             result = await call_responses_api(
                 messages=messages,
+                model=chat_model,
                 temperature=0.7,
-                max_tokens=1024,
+                max_tokens=16384,
             )
 
         elapsed = time.time() - start_time
-        logger.info(f"Chat completed in {elapsed:.1f}s, user={req.user_id}, mode={req.mode}")
+        logger.info(f"Chat completed in {elapsed:.1f}s, user={req.user_id}, mode={req.mode}, model={chat_model}, has_images={has_images}")
 
         return ChatResponse(
             reply=result["content"],
@@ -532,13 +551,14 @@ async def chat_stream(req: ChatRequest):
                     messages.append({"role": h.role, "content": h.content})
                 messages.append({"role": "user", "content": user_content})
 
-                # 专家模式：显式开启深度思考
+                # 专家模式：开启深度思考，充足思考预算确保完整推理
                 payload = {
                     "model": chat_model,
                     "messages": messages,
                     "stream": True,
                     "max_tokens": 16384,
                     "enable_thinking": True,
+                    "thinking_budget": 2048,  # 充足思考预算，避免截断导致思考混入正文
                     "stream_options": {"include_usage": True},
                 }
                 # 多模态模型需指定输出模态为纯文本（思考模式下不支持音频）
@@ -604,35 +624,45 @@ async def chat_stream(req: ChatRequest):
                 yield f"data: {_json.dumps({'done': True}, ensure_ascii=False)}\n\n"
 
             else:
-                # ===== 快速模式：默认不加上下文，关闭思考，极速响应 =====
-                # 但若用户问题涉及历史数据查询（如"2022年年报"），仍注入 RAG 检索结果
-                archived_summaries_fast = ""
-                if _match_time_keyword(req.message):
-                    try:
-                        archived_summaries_fast = await _get_archived_summaries(req.user_id, req.message)
-                    except Exception as e:
-                        logger.warning(f"Fast mode RAG retrieval failed: {e}")
+                # ===== 快速模式：注入用户画像 + 最近归档 + 时间关键词触发完整 RAG =====
+                import asyncio
+                user_context_fast, archived_summaries_fast, recent_summaries_fast = await asyncio.gather(
+                    _build_user_context(req.user_id),
+                    _get_archived_summaries(req.user_id, req.message),
+                    _fallback_recent_summaries(req.user_id),
+                )
+                # asyncio.gather 的 sleep 返回 None，需处理
+                if not isinstance(archived_summaries_fast, str):
+                    archived_summaries_fast = ""
 
                 if archived_summaries_fast:
-                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n"
-                                    "你具备视觉能力，可以查看和分析用户发送的图片，不要声称自己无法查看图片。\n\n"
-                                    "以下是用户的历史归档数据，请基于这些数据回答用户问题：\n"
+                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji，"
+                                    "不要使用LaTeX公式(如$...$)，用中文文字表达计算。\n\n"
+                                    f"## 用户信息\n{user_context_fast}\n\n"
+                                    "## 历史归档数据\n"
                                     + archived_summaries_fast)
+                elif recent_summaries_fast:
+                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji，"
+                                    "不要使用LaTeX公式(如$...$)，用中文文字表达计算。\n\n"
+                                    f"## 用户信息\n{user_context_fast}\n\n"
+                                    + recent_summaries_fast)
                 else:
-                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji。\n"
-                                    "你具备视觉能力，可以查看和分析用户发送的图片，不要声称自己无法查看图片。")
+                    sys_content = ("你是智能饮食健康秤的AI助手。用中文简洁回答，不要用emoji，"
+                                    "不要使用LaTeX公式(如$...$)，用中文文字表达计算。\n\n"
+                                    f"## 用户信息\n{user_context_fast}\n\n"
+                                    "请基于用户的个人数据（性别、年龄、身高、体重、目标、近期饮食）给出针对性回答。")
                 messages = [{"role": "system", "content": sys_content}]
                 # 快速模式：仅保留最近3轮对话（6条），最小化上下文以极速响应
                 for h in req.history[-6:]:
                     messages.append({"role": h.role, "content": h.content})
                 messages.append({"role": "user", "content": user_content})
 
-                # 快速模式：显式关闭思考，极速响应
+                # 快速模式：显式关闭思考，极速响应，16384 tokens 保证不截断
                 payload = {
                     "model": chat_model,
                     "messages": messages,
                     "stream": True,
-                    "max_tokens": 1024,
+                    "max_tokens": 16384,
                     "enable_thinking": False,
                     "stream_options": {"include_usage": True},
                 }
@@ -797,39 +827,66 @@ async def _get_archived_summaries(user_id: int, query: str = "") -> str:
         # 1. 确保 user_analysis_summaries 中所有摘要都已向量化入库
         await _ensure_summaries_embedded(user_id)
 
-        # 1.5 时间关键词识别：如果用户问句含"YYYY年"+"年报/月报/周报"，优先精确按年份匹配
+        # 1.5 时间关键词识别：支持绝对年份(2024年)、相对时间(3年前/去年)、时间段(这7年)等
         time_matched = _match_time_keyword(query)
         if time_matched:
-            year, s_type = time_matched
-            async with get_connection() as conn:
-                # 优先取该年的年报；若无则取该年所有月报；再无则取该年所有周报
-                rows = []
-                if s_type in ("yearly", "all"):
+            if time_matched[0] == "recent":
+                # "最近/近期" → 直接取最近归档，不走语义检索
+                logger.info(f"[rag] Recent-time query detected, using fallback summaries")
+                return await _fallback_recent_summaries(user_id)
+            if len(time_matched) == 4 and time_matched[2] == "range":
+                # 时间段范围查询："这7年" → (2020, 2026, "range")
+                start_year, end_year, _, _ = time_matched
+                async with get_connection() as conn:
                     rows = await conn.fetch(
                         """SELECT source_date, source_type, content_text FROM user_health_embeddings
                            WHERE user_id=$1 AND source_type='yearly_summary'
-                             AND EXTRACT(YEAR FROM source_date)=$2
-                           ORDER BY source_date DESC""",
-                        user_id, year)
-                if not rows:
-                    target_type = "monthly_summary" if s_type in ("monthly", "all") else "weekly_summary"
-                    rows = await conn.fetch(
-                        """SELECT source_date, source_type, content_text FROM user_health_embeddings
-                           WHERE user_id=$1 AND source_type=$2
-                             AND EXTRACT(YEAR FROM source_date)=$3
-                           ORDER BY source_date DESC""",
-                        user_id, target_type, year)
-            if rows:
-                type_label = {"yearly": "年", "monthly": "月", "weekly": "周", "all": ""}.get(s_type, "")
-                parts = [f"## 用户询问的{year}年{type_label}报数据（按时间精确匹配）"]
-                for r in rows[:8]:
-                    s_t_cn = {"yearly_summary": "年", "monthly_summary": "月",
-                              "weekly_summary": "周"}.get(r["source_type"], r["source_type"])
-                    parts.append(f"- [{s_t_cn}报 {r['source_date']}]\n{r['content_text']}")
-                result = "\n".join(parts)
-                logger.info(f"[rag] Time-match {year}/{s_type}: {len(rows)} rows, prompt_len={len(result)}")
-                return result
-            logger.info(f"[rag] Time-match {year}/{s_type}: no rows found, fallback to semantic search")
+                             AND EXTRACT(YEAR FROM source_date) >= $2
+                             AND EXTRACT(YEAR FROM source_date) <= $3
+                           ORDER BY source_date ASC""",
+                        user_id, start_year, end_year)
+                if rows:
+                    parts = [f"## 用户{start_year}-{end_year}年全部年报数据（按时间排序）"]
+                    for r in rows:
+                        label = _format_summary_label(r["source_date"], "yearly")
+                        parts.append(f"- [{label}]\n{r['content_text']}")
+                    result = "\n".join(parts)
+                    logger.info(f"[rag] Range-match {start_year}-{end_year}: {len(rows)} yearly summaries, prompt_len={len(result)}")
+                    return result
+                logger.info(f"[rag] Range-match {start_year}-{end_year}: no rows found, fallback to semantic search")
+                # 无年报范围数据，继续走语义检索
+            else:
+                # 单年单类型匹配
+                year, s_type = time_matched[0], time_matched[1]
+                async with get_connection() as conn:
+                    # 优先取该年的年报；若无则取该年所有月报；再无则取该年所有周报
+                    rows = []
+                    if s_type in ("yearly", "all"):
+                        rows = await conn.fetch(
+                            """SELECT source_date, source_type, content_text FROM user_health_embeddings
+                               WHERE user_id=$1 AND source_type='yearly_summary'
+                                 AND EXTRACT(YEAR FROM source_date)=$2
+                               ORDER BY source_date DESC""",
+                            user_id, year)
+                    if not rows:
+                        target_type = "monthly_summary" if s_type in ("monthly", "all") else "weekly_summary"
+                        rows = await conn.fetch(
+                            """SELECT source_date, source_type, content_text FROM user_health_embeddings
+                               WHERE user_id=$1 AND source_type=$2
+                                 AND EXTRACT(YEAR FROM source_date)=$3
+                               ORDER BY source_date DESC""",
+                            user_id, target_type, year)
+                if rows:
+                    type_label = {"yearly": "年", "monthly": "月", "weekly": "周", "all": ""}.get(s_type, "")
+                    parts = [f"## 用户询问的{year}年{type_label}报数据（按时间精确匹配）"]
+                    for r in rows[:8]:
+                        s_t = (r["source_type"] or "").replace("_summary", "")
+                        label = _format_summary_label(r["source_date"], s_t)
+                        parts.append(f"- [{label}]\n{r['content_text']}")
+                    result = "\n".join(parts)
+                    logger.info(f"[rag] Time-match {year}/{s_type}: {len(rows)} rows, prompt_len={len(result)}")
+                    return result
+                logger.info(f"[rag] Time-match {year}/{s_type}: no rows found, fallback to semantic search")
 
         # 2. 用 query embedding 检索 top-k 最相关摘要
         query_embedding_list, _ = await call_embedding_api([query])
@@ -858,7 +915,8 @@ async def _get_archived_summaries(user_id: int, query: str = "") -> str:
             sim = r.get("similarity", 0)
             # content_text 是 embed 时存入的格式化文本，直接复用
             text = r.get("content_text", "")
-            parts.append(f"- [{s_type}报 {s_date} 相似度{sim:.2f}]\n{text}")
+            label = _format_summary_label(s_date, s_type)
+            parts.append(f"- [{label} 相似度{sim:.2f}]\n{text}")
 
         result = "\n".join(parts)
         logger.info(f"[rag] Retrieved {len(results)} summaries for query='{query[:30]}...', prompt_len={len(result)}")
@@ -937,6 +995,41 @@ async def _ensure_summaries_embedded(user_id: int):
         logger.warning(f"_ensure_summaries_embedded failed: {e}")
 
 
+def _format_summary_label(s_date, s_type: str) -> str:
+    """生成人类可读的报告标签，例如「2025年3月」「2025年」「2026-07-06~2026-07-12」"""
+    if not isinstance(s_date, (str, type(None))):
+        try:
+            s_date = str(s_date)
+        except Exception:
+            s_date = ""
+    if not s_date:
+        return s_type
+
+    parts = s_date.split("-")
+    try:
+        year = int(parts[0])
+        month = int(parts[1]) if len(parts) >= 2 else 0
+        day = int(parts[2]) if len(parts) >= 3 else 0
+    except (ValueError, IndexError):
+        return f"{s_type}({s_date})"
+
+    if s_type == "yearly":
+        return f"{year}年"
+    elif s_type == "monthly":
+        return f"{year}年{month}月"
+    elif s_type == "weekly":
+        # 周报显示日期区间：2026-07-06~2026-07-12
+        from datetime import date, timedelta
+        try:
+            d = date(year, month, day)
+            end = d + timedelta(days=6)
+            return f"{d.isoformat()}~{end.isoformat()}"
+        except (ValueError, IndexError):
+            return f"{s_date}"
+    else:
+        return f"{s_type}({s_date})"
+
+
 def _format_summary_for_embedding(s_date, s_type: str, ins: dict) -> str:
     """把摘要格式化为用于 embedding 的文本（也作为 prompt 注入文本）"""
     try:
@@ -951,8 +1044,8 @@ def _format_summary_for_embedding(s_date, s_type: str, ins: dict) -> str:
         ai_summary = ins.get("ai_summary", "")
         top_foods = ins.get("top_foods", [])
 
-        type_cn = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}.get(s_type, s_type)
-        line = (f"{type_cn}({s_date}) 周期{ps}~{pe}, {meals}餐, "
+        label = _format_summary_label(s_date, s_type)
+        line = (f"{label} 周期{ps}~{pe}, {meals}餐, "
                 f"总热量{total_kcal:.0f}kcal(日均{avg_kcal:.0f}), "
                 f"蛋白{total_p:.0f}g/脂肪{total_f:.0f}g/碳水{total_c:.0f}g")
         if top_foods:
@@ -968,22 +1061,81 @@ def _format_summary_for_embedding(s_date, s_type: str, ins: dict) -> str:
 
 
 def _match_time_keyword(query: str):
-    """识别问句中的"YYYY年+年报/月报/周报"模式。
+    """识别问句中的时间模式。
 
-    返回 (year, s_type) 元组，其中 s_type ∈ {'yearly','monthly','weekly','all'}。
-    无法识别时返回 None。
+    返回：
+      - (year, s_type) 元组：s_type ∈ {'yearly','monthly','weekly','all'}
+      - ("recent", None)：最近/近期等相对时间
+      - None：无法识别
 
     Examples:
       "我2022年的年报信息是什么" -> (2022, 'yearly')
-      "2020年月报" -> (2020, 'monthly')
-      "2023年的数据" -> (2023, 'all')
-      "去年的年报" -> None（相对时间暂不处理，避免歧义）
+      "三年前吃什么比较多"     -> (当前年-3, 'all')
+      "去年饮食"               -> (当前年-1, 'all')
+      "最近饮食怎么样"          -> ("recent", None)
     """
     import re
-    m = re.search(r'(20\d{2}|19\d{2})\s*年', query)
-    if not m:
+    from datetime import datetime
+
+    current_year = datetime.now().year
+
+    def _parse_number(s: str):
+        """解析中文或阿拉伯数字，如 '3'→3, '三'→3, '十二'→12"""
+        cn = {'零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5,
+              '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+        s = s.strip()
+        if s.isdigit():
+            return int(s)
+        if len(s) == 1 and s in cn:
+            return cn[s]
+        if '十' in s:
+            parts = s.split('十')
+            tens = (cn.get(parts[0], 1) if parts[0] else 1) * 10
+            ones = cn.get(parts[1], 0) if len(parts) > 1 and parts[1] else 0
+            return tens + ones
         return None
-    year = int(m.group(1))
+
+    # 1. 相对年份：X年前（支持中文和阿拉伯数字，如"三年前"/"1年前"/"十二年前"）
+    m = re.search(r'([一二两三四五六七八九十\d]+)\s*年前', query)
+    if m:
+        n = _parse_number(m.group(1))
+        if n:
+            return _resolve_type(query, current_year - n)
+
+    # 2. "去年" / "前年"
+    if re.search(r'去年', query):
+        return _resolve_type(query, current_year - 1)
+    if re.search(r'前年', query):
+        return _resolve_type(query, current_year - 2)
+
+    # 3. 绝对年份：20XX年
+    m = re.search(r'(20\d{2}|19\d{2})\s*年', query)
+    if m:
+        return _resolve_type(query, int(m.group(1)))
+
+    # 4. 时间段："这X年"/"过去X年"/"X年的" → 返回最早年份到当前年份范围
+    m = re.search(r'(?:这|过去(?:的)?|最近)([一二两三四五六七八九十\d]+)\s*年', query)
+    if m:
+        n = _parse_number(m.group(1))
+        if n:
+            # 返回(start_year, end_year, 'range')→检索该年份范围的全部归档数据
+            return (current_year - n + 1, current_year, "range")
+    # "X年的营养" 等变体
+    m = re.search(r'([一二两三四五六七八九十\d]+)\s*年的(?:营养|饮食|数据)', query)
+    if m:
+        n = _parse_number(m.group(1))
+        if n:
+            return (current_year - n + 1, current_year, "range")
+
+    # 5. 最近/近期/这周/这个月 等相对时间 → 走 fallback 取最近归档
+    if re.search(r'最近|近期|这段|这周|这个月|近几|上个?月|上个?周|这段时间', query):
+        return ("recent", None)
+
+    return None
+
+
+def _resolve_type(query: str, year: int):
+    """根据问句中的关键词解析摘要类型"""
     q_lower = query.lower()
     if "年报" in q_lower or "年度" in q_lower or "annual" in q_lower:
         return (year, "yearly")
@@ -991,32 +1143,47 @@ def _match_time_keyword(query: str):
         return (year, "monthly")
     if "周报" in q_lower or "weekly" in q_lower:
         return (year, "weekly")
-    # 默认：用户问"YYYY年的数据"但没指定类型，优先取年报
     return (year, "all")
 
 
 async def _fallback_recent_summaries(user_id: int) -> str:
+    """获取最近归档摘要：2周报 + 2月报 + 1年报，提供完整的近期饮食全景"""
     try:
         async with get_connection() as conn:
             parts = []
-            weekly = await conn.fetchrow(
+            # 最近2份周报
+            weekly_rows = await conn.fetch(
                 """SELECT summary_date, insights FROM user_analysis_summaries
                    WHERE user_id = $1 AND summary_type = 'weekly'
-                   ORDER BY summary_date DESC LIMIT 1""", user_id)
-            if weekly:
-                ins = _parse_insights(weekly["insights"])
-                text = _format_summary_for_embedding(weekly["summary_date"], "weekly", ins)
+                   ORDER BY summary_date DESC LIMIT 2""", user_id)
+            for r in weekly_rows:
+                ins = _parse_insights(r["insights"])
+                text = _format_summary_for_embedding(r["summary_date"], "weekly", ins)
                 if text:
-                    parts.append(f"- [周报 {weekly['summary_date']}]\n{text}")
-            monthly = await conn.fetchrow(
+                    label = _format_summary_label(r["summary_date"], "weekly")
+                    parts.append(f"- [{label}]\n{text}")
+            # 最近2份月报
+            monthly_rows = await conn.fetch(
                 """SELECT summary_date, insights FROM user_analysis_summaries
                    WHERE user_id = $1 AND summary_type = 'monthly'
-                   ORDER BY summary_date DESC LIMIT 1""", user_id)
-            if monthly:
-                ins = _parse_insights(monthly["insights"])
-                text = _format_summary_for_embedding(monthly["summary_date"], "monthly", ins)
+                   ORDER BY summary_date DESC LIMIT 2""", user_id)
+            for r in monthly_rows:
+                ins = _parse_insights(r["insights"])
+                text = _format_summary_for_embedding(r["summary_date"], "monthly", ins)
                 if text:
-                    parts.append(f"- [月报 {monthly['summary_date']}]\n{text}")
+                    label = _format_summary_label(r["summary_date"], "monthly")
+                    parts.append(f"- [{label}]\n{text}")
+            # 最近1份年报
+            yearly = await conn.fetchrow(
+                """SELECT summary_date, insights FROM user_analysis_summaries
+                   WHERE user_id = $1 AND summary_type = 'yearly'
+                   ORDER BY summary_date DESC LIMIT 1""", user_id)
+            if yearly:
+                ins = _parse_insights(yearly["insights"])
+                text = _format_summary_for_embedding(yearly["summary_date"], "yearly", ins)
+                if text:
+                    label = _format_summary_label(yearly["summary_date"], "yearly")
+                    parts.append(f"- [{label}]\n{text}")
             return "## 最近历史归档数据\n" + "\n".join(parts) if parts else "暂无历史归档数据"
     except Exception as e:
         logger.warning(f"_fallback_recent_summaries failed: {e}")
@@ -1107,7 +1274,7 @@ def _get_chat_system_prompt(user_context: str, archived_summaries: str = "", mod
             "- 使用有序或无序列表分点罗列数据支撑、原因解释、可执行方案；\n"
             "- 涉及对比数据时使用Markdown表格呈现；\n"
             "- 引用重要结论或补充说明时使用 > 引用块；\n"
-            "- 回复正文要详尽完整，单次回复不少于500字，复杂问题可更长；\n"
+            "- 回复正文控制在 300-500 字，用最精炼的语言呈现核心结论和建议；\n"
             "- 避免空话套话，要让用户感受到专业、可信、有用的深度内容。\n"
         )
     else:
@@ -1121,6 +1288,8 @@ def _get_chat_system_prompt(user_context: str, archived_summaries: str = "", mod
         )
     prompt = (
         "你是智能饮食健康秤的AI助手。你可以回答任何问题，用户问什么就答什么，不要强行往饮食话题上靠。\n"
+        "不要使用LaTeX公式(如$...$或$$...$$)，用中文文字自然表达计算过程和结果。\n"
+        "标题和正文结论必须一致，不要出现标题说\"严重超标\"但结论说\"完全达标\"的矛盾。\n"
         "## 多模态能力\n"
         "你具备视觉能力，可以查看和分析用户发送的图片。当用户消息中包含图片时：\n"
         "- 直接描述和分析图片内容，不要声称自己无法查看图片或只是文本AI；\n"

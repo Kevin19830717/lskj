@@ -41,9 +41,27 @@ const TAB_ITEMS = [
   { id: "ai", label: "AI总结", icon: Sparkles },
 ] as const
 
-function fmtDate(v?: string) {
-  if (!v) return "-"; const d = new Date(v)
-  return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString("zh-CN")
+// 根据报告类型生成友好标签：2025年3月、2025年、2026-07-06~2026-07-12
+function fmtReportLabel(dateStr?: string, summaryType?: string) {
+  if (!dateStr) return "-"
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return dateStr
+  const y = d.getFullYear()
+  const m = d.getMonth() + 1
+  const day = d.getDate()
+  const pad = (n: number) => String(n).padStart(2, "0")
+  switch (summaryType) {
+    case "yearly": return `${y}年`
+    case "monthly": return `${y}年${m}月`
+    case "weekly": {
+      // 计算周结束日期（+6天）
+      const end = new Date(d)
+      end.setDate(end.getDate() + 6)
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}~${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())}`
+    }
+    case "daily": return `${y}年${m}月${day}日`
+    default: return d.toLocaleDateString("zh-CN")
+  }
 }
 function rv(v: unknown) {
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(1)
@@ -127,7 +145,7 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
             <h4 className="text-lg font-semibold flex items-center gap-2">
               <span className="inline-flex items-center gap-1 rounded-full px-3 py-1 text-sm font-bold text-white"
                 style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}>{tg.emoji} {tg.label}</span>
-              {fmtDate(summary.summary_date)}
+              {fmtReportLabel(summary.summary_date, summary.summary_type)}
             </h4>
             <p className="text-xs text-gray-500 mt-1">{!isDaily ? `共 ${periodDiv} 天` : ""}</p>
           </div>
@@ -340,7 +358,8 @@ export default function ReportsPage() {
     const res = await apiPost<unknown>(`/summaries/generate-next?type=${summaryType}`)
     if (res.code === 0) {
       setFeedback(res.message ? res.message : `已生成一条${cn}`)
-      fetchPage(page, summaryType)
+      setPage(1)
+      fetchPage(1, summaryType)
     } else setFeedback("生成失败：" + (res.message || "未知错误"))
     setBackfilling(false); setTimeout(() => setFeedback(""), 4000)
   }
@@ -350,10 +369,12 @@ export default function ReportsPage() {
   const actions = (
     <div className="flex items-center gap-2 ml-auto flex-wrap">
       <AnimatedDropdown options={summaryTypeOptions} value={summaryType} onChange={setSummaryType} theme="green" icon={<Clock className="h-4 w-4" />} />
+      {summaryType !== "daily" && (
       <button disabled={backfilling} onClick={handleBackfill}
         className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white px-2 py-1.5 text-xs lg:px-3 lg:py-2 lg:text-sm font-medium shadow-sm hover:shadow-md transition disabled:opacity-50">
         <Zap className={`h-4 w-4 ${backfilling ? "animate-pulse" : ""}`} />{backfilling ? "生成中…" : "生成一条"}
       </button>
+      )}
       <button disabled={clearing} onClick={handleClearAll}
         className="inline-flex items-center gap-1 rounded-xl bg-red-50 border border-red-200 px-2 py-1.5 text-xs lg:px-3 lg:py-2 lg:text-sm text-red-600 hover:bg-red-100 transition disabled:opacity-50" title="清除周报/月报/年报（保留日报）">
         <Trash className="h-4 w-4" />清除周/月/年报
@@ -378,7 +399,7 @@ export default function ReportsPage() {
       {loading ? (
         <Card className="border-0 bg-white/80"><CardContent className="px-6 py-8 flex justify-center"><WaveLoader bars={4} message="加载中..." /></CardContent></Card>
       ) : summaries.length === 0 ? (
-        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">暂无报告，点击「一键生成」开始</CardContent></Card>
+        <Card className="border-0 bg-white/80"><CardContent className="px-6 py-10 text-center text-gray-400">{summaryType === "daily" ? "暂无日报，日报由餐食记录自动生成" : "暂无报告"}</CardContent></Card>
       ) : (
         <>
           {/* 双列网格 + 依次出现动画 */}
@@ -407,7 +428,7 @@ export default function ReportsPage() {
                               style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }}>
                               {tg.emoji} {tg.label}
                             </span>
-                            <h3 className="text-xs lg:text-sm font-bold text-gray-900 mt-1.5 leading-tight">{fmtDate(s.summary_date)}</h3>
+                            <h3 className="text-xs lg:text-sm font-bold text-gray-900 mt-1.5 leading-tight">{fmtReportLabel(s.summary_date, s.summary_type)}</h3>
                           </div>
 
                           {/* 右侧：营养数据 + 常吃食物 */}

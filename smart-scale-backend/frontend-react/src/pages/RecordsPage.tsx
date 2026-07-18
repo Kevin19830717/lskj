@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { DateRange } from "react-aria-components"
 import AppShell from "@/components/app-shell"
-import { apiGet, apiPut, apiDelete, type PaginatedRecords, type WeighRecord } from "@/lib/api"
+import { apiGet, apiPut, apiDelete, apiDeleteWithBody, type PaginatedRecords, type WeighRecord } from "@/lib/api"
 import { Card, CardContent } from "@/components/ui/card"
 import { motion, AnimatePresence } from "framer-motion"
 import { JollyDateRangePicker } from "@/components/ui/date-range-picker"
-import { ClipboardList, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils, Pencil, Trash2 } from "lucide-react"
+import { ClipboardList, CheckSquare, Square, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils, Pencil, Trash2 } from "lucide-react"
 import { WaveLoader } from "@/components/wave-loader"
 
 // ============================================================
@@ -40,7 +40,7 @@ function formatDateTimeForInput(dateStr?: string) {
 }
 
 // ============================================================
-// 烹饪方式颜色映射 — 7种方式对应7种颜色
+// 烹饪方式颜色映射 — 8种方式对应8种颜色
 // ============================================================
 export const COOKING_COLORS: Record<string, { from: string; to: string; text: string; bg: string }> = {
   boil:      { from: "#38bdf8", to: "#0284c7", text: "#0369a1", bg: "#e0f2fe" },  // 煮 — 蓝
@@ -50,6 +50,7 @@ export const COOKING_COLORS: Record<string, { from: string; to: string; text: st
   roast:     { from: "#c084fc", to: "#7e22ce", text: "#6b21a8", bg: "#f3e8ff" },  // 烤 — 紫
   steam:     { from: "#4ade80", to: "#16a34a", text: "#15803d", bg: "#dcfce7" },  // 蒸 — 绿
   stir_fry:  { from: "#2dd4bf", to: "#0d9488", text: "#0f766e", bg: "#ccfbf1" },  // 炒 — 青
+  raw:       { from: "#c4a46c", to: "#7a5a30", text: "#5c401f", bg: "#f7efe2" },  // 生食 — 棕
 }
 const DEFAULT_COOKING_C = { from: "#9ca3af", to: "#4b5563", text: "#374151", bg: "#f3f4f6" }
 export function cookingColor(method?: string) {
@@ -213,19 +214,44 @@ export default function RecordsPage() {
   const [editPotassium, setEditPotassium] = useState("")
   const [savingRecordId, setSavingRecordId] = useState<number | null>(null)
   const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null)
+  // 批量选择删除
+  const [batchMode, setBatchMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  // 手机端每页 9 条，桌面端 12 条
+  const [pageSize] = useState(() => typeof window !== "undefined" && window.innerWidth < 1024 ? 9 : 12)
 
   const startDate = dateRange?.start ? dateRange.start.toString() : ""
   const endDate = dateRange?.end ? dateRange.end.toString() : ""
+
+  // 搜索防抖：输入后 300ms 触发后端搜索
+  const [debouncedSearch, setDebouncedSearch] = useState("")
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim())
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+
+  // 搜索词变化时重置到第一页
+  const prevSearch = useRef(debouncedSearch)
+  useEffect(() => {
+    if (prevSearch.current !== debouncedSearch) {
+      prevSearch.current = debouncedSearch
+      setCurrentPage(1)
+    }
+  }, [debouncedSearch])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     const params = new URLSearchParams({
       page: String(currentPage),
-      page_size: "12",
+      page_size: String(pageSize),
     })
     if (startDate) params.set("start_date", startDate)
     if (endDate) params.set("end_date", endDate)
+    if (debouncedSearch) params.set("search", debouncedSearch)
     apiGet<PaginatedRecords>(`/records?${params.toString()}`).then(res => {
       if (!cancelled) {
         setRecords(res.data ?? null)
@@ -233,7 +259,7 @@ export default function RecordsPage() {
       }
     })
     return () => { cancelled = true }
-  }, [currentPage, startDate, endDate])
+  }, [currentPage, startDate, endDate, debouncedSearch])
 
   const pageButtons = useMemo(() => {
     const totalPages = records?.total_pages ?? 0
@@ -246,20 +272,11 @@ export default function RecordsPage() {
   const total = records?.total ?? 0
   const items = records?.items ?? []
 
-  const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) return items
-    const q = searchQuery.trim().toLowerCase()
-    return items.filter((r) => {
-      const names = r.ingredient_names?.length ? r.ingredient_names : r.ingredients
-      return names.some((n) => n.toLowerCase().includes(q))
-        || (r.cooking_method_label || r.cooking_method || "").toLowerCase().includes(q)
-    })
-  }, [items, searchQuery])
-
   const refreshRecords = () => {
-    const params = new URLSearchParams({ page: String(currentPage), page_size: "12" })
+    const params = new URLSearchParams({ page: String(currentPage), page_size: String(pageSize) })
     if (startDate) params.set("start_date", startDate)
     if (endDate) params.set("end_date", endDate)
+    if (debouncedSearch) params.set("search", debouncedSearch)
     setLoading(true)
     apiGet<PaginatedRecords>(`/records?${params.toString()}`).then(res => {
       setRecords(res.data ?? null)
@@ -327,8 +344,35 @@ export default function RecordsPage() {
     if (!confirm("确定删除这条记录？")) return
     setDeletingRecordId(id)
     const res = await apiDelete(`/records/${id}`)
-    if (res.code === 0) refreshRecords()
+    if (res.code === 0) { setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n }); refreshRecords() }
     setDeletingRecordId(null)
+  }
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === items.length) setSelectedIds(new Set())
+    else setSelectedIds(new Set(items.map(r => r.id)))
+  }
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return
+    if (!confirm(`确定删除选中的 ${selectedIds.size} 条记录？`)) return
+    setBatchDeleting(true)
+    const res = await apiDeleteWithBody("/records/batch", { ids: Array.from(selectedIds) })
+    if (res.code === 0) {
+      setSelectedIds(new Set())
+      setBatchMode(false)
+      refreshRecords()
+    }
+    setBatchDeleting(false)
   }
 
   return (
@@ -359,7 +403,7 @@ export default function RecordsPage() {
             />
           </div>
           <span className="text-sm text-gray-500">
-            共 {total} 条记录{searchQuery.trim() ? `，筛选 ${filteredItems.length} 条` : ""}
+            共 {total} 条记录{searchQuery.trim() ? `，匹配 ${total} 条` : ""}
           </span>
         </div>
         <div className="date-picker-purple flex flex-wrap items-center gap-2 w-full lg:w-auto">
@@ -373,6 +417,38 @@ export default function RecordsPage() {
             className="w-full lg:min-w-[300px]"
           />
         </div>
+      </div>
+
+      {/* 批量操作工具栏 */}
+      <div className="flex items-center gap-2 mb-3">
+        {!batchMode ? (
+          <button type="button"
+            onClick={() => { setBatchMode(true); setSelectedIds(new Set()) }}
+            className="inline-flex items-center gap-1 rounded-lg border border-[#667eea]/30 px-3 py-1.5 text-xs text-[#667eea] hover:bg-[#667eea]/10 transition-colors">
+            <CheckSquare className="h-3.5 w-3.5" /> 批量编辑
+          </button>
+        ) : (
+          <>
+            <button type="button" onClick={toggleSelectAll}
+              className="inline-flex items-center gap-1 rounded-lg border border-[#667eea]/30 px-3 py-1.5 text-xs text-[#667eea] hover:bg-[#667eea]/10 transition-colors">
+              {selectedIds.size === items.length && items.length > 0 ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+              全选 ({selectedIds.size}/{items.length})
+            </button>
+            {selectedIds.size > 0 && (
+              <button type="button" disabled={batchDeleting}
+                onClick={handleBatchDelete}
+                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50">
+                <Trash2 className="h-3.5 w-3.5" />
+                {batchDeleting ? "删除中…" : `删除选中(${selectedIds.size})`}
+              </button>
+            )}
+            <button type="button"
+              onClick={() => { setBatchMode(false); setSelectedIds(new Set()) }}
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 transition-colors">
+              取消
+            </button>
+          </>
+        )}
       </div>
 
       <Card className="border-0 bg-white lg:bg-white/85 shadow-none lg:shadow-[0_12px_40px_rgba(102,126,234,0.12)]">
@@ -437,9 +513,9 @@ export default function RecordsPage() {
           <div className="hidden lg:flex items-center gap-3 px-6 py-3 border-b border-gray-200 bg-gray-50/80 text-xs font-semibold text-gray-500 uppercase tracking-wide">
             <div className="w-6" />
             <div className="flex-1 flex items-center gap-4 min-w-0">
-              <div className="w-[130px] text-center whitespace-nowrap flex-shrink-0">时间</div>
+              <div className="w-[130px] text-center flex-shrink-0">时间</div>
               <div className="flex-1 text-center">食材</div>
-              <div className="w-[70px] text-center whitespace-nowrap flex-shrink-0">烹饪方式</div>
+              <div className="w-[80px] text-center flex-shrink-0">烹饪</div>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
               <div className="w-[70px] text-right">热量</div>
@@ -447,6 +523,8 @@ export default function RecordsPage() {
               <div className="w-[55px] text-right">脂肪</div>
               <div className="w-[55px] text-right">碳水</div>
             </div>
+            {/* 编辑/删除按钮占位 — 与数据行 ml-2 + 两个p-1.5按钮对齐 */}
+            <div className="w-14 flex-shrink-0 ml-2" />
           </div>
 
           {/* 列表 — 每条记录独立容器，详情紧跟其后 */}
@@ -454,13 +532,14 @@ export default function RecordsPage() {
             {loading && (
               <div className="px-4 py-8 flex justify-center"><WaveLoader bars={4} message="加载中..." /></div>
             )}
-            {!loading && filteredItems.length === 0 && (
+            {!loading && items.length === 0 && (
               <div className="px-4 py-10 text-center text-gray-400">暂无记录</div>
             )}
-            {!loading && filteredItems.map((record, recordIdx) => {
+            {!loading && items.map((record, recordIdx) => {
               const isExpanded = expandedId === record.id
               const names = record.ingredient_names?.length ? record.ingredient_names : record.ingredients
               const methodLabel = cookingLabel(record)
+              const isSelected = selectedIds.has(record.id)
               return (
                 <motion.div
                   key={record.id}
@@ -474,6 +553,14 @@ export default function RecordsPage() {
                     className="group hidden lg:flex items-center gap-3 px-6 py-3 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
                     onClick={() => setExpandedId(isExpanded ? null : record.id)}
                   >
+                    {/* 选择框 — 仅批量模式显示 */}
+                    {batchMode && (
+                      <button type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleSelect(record.id) }}
+                        className="flex items-center justify-center w-6 flex-shrink-0">
+                        {isSelected ? <CheckSquare className="h-4 w-4 text-[#667eea]" /> : <Square className="h-4 w-4 text-gray-300" />}
+                      </button>
+                    )}
                     {/* 展开箭头 */}
                     <motion.div
                       animate={{ rotate: isExpanded ? 90 : 0 }}
@@ -494,7 +581,7 @@ export default function RecordsPage() {
                         {names.join("、")}
                       </span>
                       {/* 烹饪方式 — 居中 + 彩色背景 */}
-                      <span className="flex-shrink-0 w-[70px] flex justify-center">
+                      <span className="flex-shrink-0 w-[80px] flex justify-center">
                         <CookingTag method={record.cooking_method} label={methodLabel} />
                       </span>
                     </div>
@@ -537,9 +624,16 @@ export default function RecordsPage() {
                     className="lg:hidden px-3 py-2 cursor-pointer transition-colors hover:bg-[#f8f9ff]"
                     onClick={() => setExpandedId(isExpanded ? null : record.id)}
                   >
-                    {/* 顶部：时间 + 烹饪方式 + 编辑/删除 + 展开箭头 */}
+                    {/* 顶部：选择框(batchMode) + 时间 + 烹饪方式 + 编辑/删除 + 展开箭头 */}
                     <div className="flex items-center justify-between gap-1.5 mb-1">
                       <div className="flex items-center gap-1 min-w-0">
+                        {batchMode && (
+                          <button type="button"
+                            onClick={(e) => { e.stopPropagation(); toggleSelect(record.id) }}
+                            className="flex items-center justify-center flex-shrink-0">
+                            {isSelected ? <CheckSquare className="h-3 w-3 text-[#667eea]" /> : <Square className="h-3 w-3 text-gray-300" />}
+                          </button>
+                        )}
                         <Clock className="h-2.5 w-2.5 text-[#667eea] flex-shrink-0" />
                         <span className="text-[11px] text-gray-600 whitespace-nowrap truncate">
                           {formatDateTime(record.created_at)}
@@ -649,8 +743,8 @@ export default function RecordsPage() {
                 <div className="w-[120px] flex-shrink-0">
                   <label className="block text-[11px] lg:text-xs font-medium text-[#5a5fcf] mb-1">烹饪方式</label>
                   <select value={editCookingMethod} onChange={e => setEditCookingMethod(e.target.value)}
-                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 text-gray-800 px-2.5 h-9 lg:py-2.5 text-sm outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20">
-                    <option value="">未选择</option>
+                    className="w-full rounded-xl border border-[#c8c3eb] bg-white/70 text-gray-800 px-2 h-9 text-xs outline-none focus:border-[#667eea] focus:ring-2 focus:ring-[#667eea]/20">
+                    <option value="raw">生食</option>
                     <option value="boil">煮</option><option value="steam">蒸</option>
                     <option value="stir_fry">炒</option><option value="braise">炖</option>
                     <option value="roast">烤</option><option value="pan_fry">煎</option>

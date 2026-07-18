@@ -20,6 +20,8 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
     // 启用 WebView 调试（开发期，正式发布建议关闭）
     webContentsDebuggingEnabled: true,
+    // WebView 背景色：与启动图保持一致，避免切后台/页面加载时白屏
+    backgroundColor: "#059669",
   },
 
   // 服务端配置：纯离线套壳，所有请求走前端 fetch + 公网后端

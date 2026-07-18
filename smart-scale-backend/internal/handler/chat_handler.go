@@ -195,6 +195,9 @@ func (h *ChatHandler) ChatStream(c *gin.Context) {
 	if err := scanner.Err(); err != nil {
 		logrus.WithError(err).Error("Error reading stream from RAG service")
 	}
+	// 发送标准 SSE 结束标记
+	fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
+	flusher.Flush()
 }
 
 // ChatHistory 获取用户聊天历史记录

@@ -70,7 +70,9 @@ export TOP_K_DEFAULT=5
 echo -e "${YELLOW}[1/5] 清理旧进程...${NC}"
 pkill -f "smart-scale-server" 2>/dev/null || true
 pkill -f "uvicorn app:app" 2>/dev/null || true
-sleep 1
+# 清理所有 nginx（无论通过 systemd 还是裸 nginx 命令启动的，避免 80 端口占用导致 systemctl 失败）
+sudo killall -9 nginx 2>/dev/null || true
+sleep 2
 
 # ---- 数据库初始化 ----
 echo -e "${YELLOW}[2/5] 检查数据库...${NC}"
@@ -109,11 +111,9 @@ server {
         proxy_buffering off;
     }
 
-    # ===== 上传文件（头像、聊天图片）—— 用 ^~ 前缀，优先级高于正则
+    # ===== 上传文件（头像、聊天图片、APK）—— alias 直接静态文件，后端停了也能下载
     location ^~ /uploads/ {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        alias /home/ubuntu/lskj/smart-scale-backend/uploads/;
         client_max_body_size 10M;
     }
 

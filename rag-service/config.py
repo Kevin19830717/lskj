@@ -15,7 +15,7 @@ class Settings(BaseSettings):
 
     # DashScope API (OpenAI 兼容模式)
     DASHSCOPE_API_KEY: str = ""
-    TEXT_MODEL: str = "qwen-plus"
+    TEXT_MODEL: str = "qwen3.7-plus"
     VL_MODEL: str = "qwen-vl-flash"
     OMNI_MODEL: str = "qwen3-omni-flash"  # 多模态思考模型（支持文本+图片+enable_thinking）
     EMBEDDING_MODEL: str = "text-embedding-v2"

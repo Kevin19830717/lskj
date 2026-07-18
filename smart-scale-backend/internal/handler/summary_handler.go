@@ -86,14 +86,18 @@ func (h *SummaryHandler) GetSummaries(c *gin.Context) {
 
 // DeleteAllSummaries 清除当前用户全部报告（测试用）
 // DELETE /api/v1/summaries?exclude_daily=true 时仅清除周/月/年报
+// DELETE /api/v1/summaries?types=daily 时仅清除日报
 // DELETE /api/v1/summaries
 func (h *SummaryHandler) DeleteAllSummaries(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 	excludeDaily := c.Query("exclude_daily") == "true"
+	typesParam := c.Query("types")
 
 	var count int64
 	var err error
-	if excludeDaily {
+	if typesParam != "" {
+		count, err = h.summarySvc.DeleteAllByType(c.Request.Context(), int(userID), typesParam)
+	} else if excludeDaily {
 		count, err = h.summarySvc.DeleteAllExceptDaily(c.Request.Context(), int(userID))
 	} else {
 		count, err = h.summarySvc.DeleteAllSummaries(c.Request.Context(), int(userID))
@@ -196,8 +200,9 @@ func (h *SummaryHandler) GenerateNextMissing(c *gin.Context) {
 	}
 
 	msg := map[string]string{
-		"data": "已生成数据报告（尚无AI总结，再次点击生成按钮可生成AI总结）",
-		"ai":   "已生成AI总结页",
+		"data":      "已生成数据报告（尚无AI总结，再次点击生成按钮可生成AI总结）",
+		"ai":        "已生成AI总结页",
+		"ai_failed": "已生成数据报告，但AI总结生成失败，可稍后重试",
 	}[action]
 	c.JSON(http.StatusOK, model.SuccessWithMessage(msg, summary))
 }

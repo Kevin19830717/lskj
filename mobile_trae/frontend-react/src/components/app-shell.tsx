@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react"
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
@@ -12,6 +12,8 @@ import {
   User,
   LogOut,
   Sparkles,
+  LoaderCircle,
+  RefreshCw,
 } from "lucide-react"
 
 export const USER_UPDATED_EVENT = "smart-scale-user-updated"
@@ -159,6 +161,40 @@ export default function AppShell({
     navigate("/")
   }
 
+  // ===== 下拉刷新（仅手机端） =====
+  const mainRef = useRef<HTMLElement>(null)
+  const touchStartY = useRef(0)
+  const [pullDistance, setPullDistance] = useState(0)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const PULL_THRESHOLD = 70
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (window.innerWidth >= 1024) return
+    const el = mainRef.current
+    if (!el || el.scrollTop > 0) return
+    touchStartY.current = e.touches[0].clientY
+  }
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (window.innerWidth >= 1024 || isRefreshing) return
+    const el = mainRef.current
+    if (!el || el.scrollTop > 0) return
+    const delta = e.touches[0].clientY - touchStartY.current
+    if (delta > 0) {
+      // 阻尼效果：越拉越费力
+      setPullDistance(Math.min(delta * 0.5, 100))
+    }
+  }
+
+  const onTouchEnd = () => {
+    if (pullDistance >= PULL_THRESHOLD && !isRefreshing) {
+      setIsRefreshing(true)
+      window.location.reload()
+    } else {
+      setPullDistance(0)
+    }
+  }
+
   return (
     <div className={cn("relative flex h-screen overflow-hidden bg-fixed", t.bg)}>
       <nav
@@ -267,12 +303,42 @@ export default function AppShell({
       </div>
 
       <main
+        ref={mainRef}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
         className={cn(
           "box-border h-screen p-0 pb-12 lg:p-7 relative z-1 overflow-x-hidden overflow-y-auto transition-all duration-300",
           collapsed ? "lg:ml-20 lg:w-[calc(100%-80px)] w-full" : "lg:ml-60 lg:w-[calc(100%-240px)] w-full"
         )}
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
+        {/* 下拉刷新指示器（仅手机端） */}
+        {(pullDistance > 0 || isRefreshing) && (
+          <div
+            className="lg:hidden flex items-center justify-center absolute top-0 left-0 right-0 z-50 pointer-events-none"
+            style={{ height: isRefreshing ? 40 : pullDistance }}
+          >
+            <div
+              className={cn(
+                "rounded-full bg-white/90 shadow-md flex items-center justify-center transition-all",
+                isRefreshing ? "w-8 h-8" : "w-7 h-7"
+              )}
+              style={{ transform: `rotate(${isRefreshing ? 0 : pullDistance * 3}deg)` }}
+            >
+              {isRefreshing ? (
+                <LoaderCircle className="w-4 h-4 text-[#667eea] animate-spin" />
+              ) : (
+                <RefreshCw
+                  className={cn(
+                    "w-3.5 h-3.5 transition-colors",
+                    pullDistance >= PULL_THRESHOLD ? "text-green-600" : "text-gray-400"
+                  )}
+                />
+              )}
+            </div>
+          </div>
+        )}
         <AnimatePresence mode="wait">
           <motion.div
             key={location.pathname}
