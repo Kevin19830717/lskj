@@ -295,6 +295,8 @@ func setupRoutes(
 
 	// 称重记录
 	protected.POST("/weigh-in", mealH.RecordWeighIn)
+	protected.POST("/weigh-in/cooked", mealH.RecordCookedWeighIn)
+	protected.GET("/dishes", mealH.ListDishes)
 	protected.GET("/records", mealH.GetHistoryRecords)
 	protected.PUT("/records/:id", mealH.UpdateWeighRecord)
 	protected.DELETE("/records/:id", mealH.DeleteWeighRecord)

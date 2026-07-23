@@ -152,8 +152,10 @@ export interface WeighRecord {
   cooked_calcium_mg?: number
   cooked_iron_mg?: number
   cooked_potassium_mg?: number
+  record_mode?: string
   created_at: string
 }
+
 
 export interface PaginatedRecords {
   items: WeighRecord[]

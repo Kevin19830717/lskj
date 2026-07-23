@@ -152,6 +152,7 @@ export interface WeighRecord {
   cooked_calcium_mg?: number
   cooked_iron_mg?: number
   cooked_potassium_mg?: number
+  record_mode?: string
   created_at: string
 }
 
@@ -250,4 +251,33 @@ export interface UserProfile {
   medical_reports: Record<string, MedicalReportEntry>
   created_at?: string
   updated_at?: string
+}
+
+// ===== 熟食模式相关 =====
+
+/** 熟食称重上报请求 */
+export interface CookedWeighInRequest {
+  dish_name: string
+  weight_g: number
+  created_at?: string
+}
+
+/** 熟菜营养库条目（每100g营养值） */
+export interface DishNutrition {
+  id: number
+  name_zh: string
+  energy_kcal: number
+  protein_g: number
+  fat_g: number
+  carbohydrate_g: number
+}
+
+/** 录入熟食称重记录 */
+export async function recordCookedWeighIn(body: CookedWeighInRequest) {
+  return apiPost<WeighRecord>("/weigh-in/cooked", body)
+}
+
+/** 列出所有熟菜菜名（菜名下拉用） */
+export async function listDishes() {
+  return apiGet<DishNutrition[]>("/dishes")
 }

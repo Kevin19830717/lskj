@@ -50,7 +50,8 @@ export const COOKING_COLORS: Record<string, { from: string; to: string; text: st
   roast:     { from: "#c084fc", to: "#7e22ce", text: "#6b21a8", bg: "#f3e8ff" },  // 烤 — 紫
   steam:     { from: "#4ade80", to: "#16a34a", text: "#15803d", bg: "#dcfce7" },  // 蒸 — 绿
   stir_fry:  { from: "#2dd4bf", to: "#0d9488", text: "#0f766e", bg: "#ccfbf1" },  // 炒 — 青
-  raw:       { from: "#c4a46c", to: "#7a5a30", text: "#5c401f", bg: "#f7efe2" },  // 生食 — 棕
+  raw:       { from: "#c4a46c", to: "#7a5a30", text: "#5c401f", bg: "#f7efe2" },  // 食材模式 — 棕
+  cooked:    { from: "#10b981", to: "#059669", text: "#065f46", bg: "#d1fae5" },  // 菜品模式 — 翠绿
 }
 const DEFAULT_COOKING_C = { from: "#9ca3af", to: "#4b5563", text: "#374151", bg: "#f3f4f6" }
 export function cookingColor(method?: string) {
@@ -58,32 +59,93 @@ export function cookingColor(method?: string) {
 }
 
 function cookingLabel(record: WeighRecord) {
+  if (record.record_mode === 'cooked') return '熟食'
   return record.cooking_method_label || record.cooking_method || "-"
 }
 
 // ============================================================
-// 烹饪方式标签 — 简单彩色背景（不用渐变标签框）
+// 烹饪方式标签 — 桌面端彩色圆角背景 + hover 缩放动画
 // ============================================================
 function CookingTag({ method, label }: { method?: string; label: string }) {
   const c = cookingColor(method)
   return (
-    <span
-      className="inline-flex items-center rounded px-1.5 lg:px-2 py-0 lg:py-0.5 text-[10px] lg:text-xs font-semibold whitespace-nowrap"
+    <motion.span
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
+      transition={{ duration: 0.15 }}
+      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] lg:text-xs font-semibold whitespace-nowrap shadow-sm"
       style={{ color: c.text, backgroundColor: c.bg }}
     >
       {label}
-    </span>
+    </motion.span>
   )
 }
 
 // ============================================================
-// 展开行详情面板 — 蓝紫色背景，烹饪方式用对应颜色
+// 记录模式标签 — 食材/菜品渐变徽章（参考 AI 标签样式，带动画交互）
+// 食材(raw)：蓝紫渐变 + 餐具图标 — 烹饪前把食材放秤上
+// 菜品(cooked)：翠绿渐变 + 餐具图标 — 烹饪后把成品菜放秤上
+// ============================================================
+function RecordModeTag({ mode, size = "md" }: { mode: "raw" | "cooked" | string; size?: "sm" | "md" | "lg" }) {
+  const isCooked = mode === "cooked"
+  const fromColor = isCooked ? "#10b981" : "#667eea"
+  const toColor = isCooked ? "#059669" : "#764ba2"
+  const label = isCooked ? "菜品" : "食材"
+  const Icon = Utensils
+
+  const sizeClasses = {
+    sm: "text-[8px] px-1.5 py-0 gap-0.5",
+    md: "text-[10px] lg:text-xs px-2 lg:px-2.5 py-0.5 lg:py-0.5 gap-1",
+    lg: "text-xs lg:text-sm px-3 py-1 gap-1.5",
+  }[size]
+
+  const iconSize = {
+    sm: "h-2 w-2",
+    md: "h-2.5 w-2.5 lg:h-3 lg:w-3",
+    lg: "h-3.5 w-3.5 lg:h-4 lg:w-4",
+  }[size]
+
+  return (
+    <motion.span
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      whileHover={{ scale: 1.08, y: -1 }}
+      whileTap={{ scale: 0.95 }}
+      className={`inline-flex items-center rounded-full font-bold text-white shadow-sm ${sizeClasses}`}
+      style={{ backgroundImage: `linear-gradient(135deg, ${fromColor}, ${toColor})` }}
+      title={isCooked ? "菜品模式：烹饪后把成品菜放秤上" : "食材模式：烹饪前把食材放秤上"}
+    >
+      <motion.span
+        animate={isCooked ? { rotate: [0, 5, -5, 0] } : {}}
+        transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
+      >
+        <Icon className={iconSize} />
+      </motion.span>
+      {label}
+    </motion.span>
+  )
+}
+
+// ============================================================
+// 展开行详情面板 — 食材模式蓝紫色系 / 菜品模式绿色系
 // ============================================================
 function RecordDetail({ record }: { record: WeighRecord }) {
-  const names = record.ingredient_names?.length ? record.ingredient_names : record.ingredients
+  // 菜品模式直接用 record_mode 判断（详情面板始终按真实模式渲染，不依赖 URL 开关）
+  const isCooked = record.record_mode === 'cooked'
+  const names = isCooked
+    ? [record.ingredients?.[0] || '成品菜']
+    : (record.ingredient_names?.length ? record.ingredient_names : record.ingredients)
   const weights = record.raw_weights_g || []
   const cc = cookingColor(record.cooking_method)
   const methodLabel = cookingLabel(record)
+
+  // 菜品模式绿色系配色
+  const accentText = isCooked ? 'text-emerald-600' : 'text-[#667eea]'
+  const detailTitle = isCooked ? '菜品信息' : '食材明细'
+  const weightColor = isCooked ? '#065f46' : cc.text
+  const weightBg = isCooked ? '#d1fae5' : cc.bg
+  const borderColor = isCooked ? 'border-emerald-200' : 'border-[#667eea]/15'
 
   const coreMetrics = [
     { icon: <Flame className="h-4 w-4" />, label: "热量", value: record.cooked_energy_kcal, unit: "kcal", color: "#FF5722" },
@@ -102,23 +164,31 @@ function RecordDetail({ record }: { record: WeighRecord }) {
   ].filter((m) => m.value != null && m.value > 0)
 
   return (
-    <div className="mx-4 my-3 rounded-2xl bg-gradient-to-br from-[#f0f2ff] via-[#eef1ff] to-[#f6f7ff] border border-[#dde0ff] overflow-hidden">
+    <div className={`mx-4 my-3 rounded-2xl border overflow-hidden ${
+      isCooked
+        ? 'bg-gradient-to-br from-[#ecfdf5] via-[#f0fdf4] to-[#f7fef9] border-[#bbf7d0]'
+        : 'bg-gradient-to-br from-[#f0f2ff] via-[#eef1ff] to-[#f6f7ff] border-[#dde0ff]'
+    }`}>
       {/* 顶部装饰条 */}
-      <div className="h-1.5 bg-gradient-to-r from-[#667eea] to-[#764ba2]" />
+      <div className="h-1.5 bg-gradient-to-r" style={{
+        backgroundImage: isCooked
+          ? 'linear-gradient(to right, #10b981, #059669)'
+          : 'linear-gradient(to right, #667eea, #764ba2)'
+      }} />
 
       <div className="p-3 lg:p-5">
         <div className="grid grid-cols-1 lg:grid-cols-[0.9fr_1fr] gap-4 lg:gap-5">
-          {/* 食材明细 — 整体垂直居中 */}
+          {/* 食材明细/菜品信息 — 整体垂直居中 */}
           <div className="rounded-xl bg-white/70 backdrop-blur-sm p-3 lg:p-5 shadow-sm border border-white/50 flex flex-col justify-center min-h-[240px]">
-            <h5 className="flex items-center justify-center gap-2 text-sm font-semibold text-[#667eea] mb-4">
-              <Scale className="h-4 w-4 text-[#667eea]" /> 食材明细
+            <h5 className={`flex items-center justify-center gap-2 text-sm font-semibold ${accentText} mb-4`}>
+              <Scale className={`h-4 w-4 ${accentText}`} /> {detailTitle}
             </h5>
             <div className="space-y-2.5 flex flex-col items-center">
               {names.map((name, i) => (
                 <div key={i} className="flex items-center justify-between w-full max-w-[200px] py-1 text-base">
-                  <span className="text-gray-700 font-medium">{name}</span>
+                  <span className={`font-medium ${isCooked ? 'text-emerald-800' : 'text-gray-700'}`}>{name}</span>
                   {weights[i] != null && (
-                    <span className="rounded px-2.5 py-0.5 text-sm font-semibold" style={{ color: cc.text, backgroundColor: cc.bg }}>
+                    <span className="rounded px-2.5 py-0.5 text-sm font-semibold" style={{ color: weightColor, backgroundColor: weightBg }}>
                       {Math.round(weights[i])}g
                     </span>
                   )}
@@ -126,21 +196,21 @@ function RecordDetail({ record }: { record: WeighRecord }) {
               ))}
             </div>
 
-            {/* 烹饪方式 + 用餐时间(created_at) — 竖直居中 */}
-            <div className="pt-4 mt-5 border-t border-[#667eea]/15 flex flex-col items-center gap-2.5">
-              {record.cooking_method && (
+            {/* 烹饪方式(仅食材模式) + 用餐时间 — 竖直居中 */}
+            <div className={`pt-4 mt-5 border-t ${borderColor} flex flex-col items-center gap-2.5`}>
+              {!isCooked && record.cooking_method && (
                 <div className="flex items-center justify-center gap-2 text-base">
-                  <span className="flex items-center gap-1.5 text-[#667eea] font-medium">
-                    <ChefHat className="h-4 w-4 text-[#667eea]" /> 烹饪方式
+                  <span className={`flex items-center gap-1.5 ${accentText} font-medium`}>
+                    <ChefHat className={`h-4 w-4 ${accentText}`} /> 烹饪方式
                   </span>
                   <CookingTag method={record.cooking_method} label={methodLabel} />
                 </div>
               )}
               <div className="flex items-center justify-center gap-2 text-base">
-                <span className="flex items-center gap-1.5 text-[#667eea] font-medium">
-                  <Clock className="h-4 w-4 text-[#667eea]" /> 用餐时间
+                <span className={`flex items-center gap-1.5 ${accentText} font-medium`}>
+                  <Clock className={`h-4 w-4 ${accentText}`} /> 用餐时间
                 </span>
-                <span className="rounded px-2.5 py-0.5 text-sm font-semibold" style={{ color: cc.text, backgroundColor: cc.bg }}>
+                <span className="rounded px-2.5 py-0.5 text-sm font-semibold" style={{ color: weightColor, backgroundColor: weightBg }}>
                   {formatDateTime(record.created_at)}
                 </span>
               </div>
@@ -149,8 +219,8 @@ function RecordDetail({ record }: { record: WeighRecord }) {
 
           {/* 营养数据 */}
           <div className="space-y-3">
-            <h5 className="flex items-center justify-center gap-2 text-sm font-semibold text-[#667eea]">
-              <Utensils className="h-4 w-4 text-[#667eea]" /> 营养数据
+            <h5 className={`flex items-center justify-center gap-2 text-sm font-semibold ${accentText}`}>
+              <Utensils className={`h-4 w-4 ${accentText}`} /> 营养数据
             </h5>
             {/* 核心营养素 */}
             <div className="grid grid-cols-2 gap-2.5">
@@ -167,13 +237,13 @@ function RecordDetail({ record }: { record: WeighRecord }) {
               ))}
             </div>
 
-            {/* 详细营养素 */}
+            {/* 详细营养素 — 菜品模式若微量元素为0则自动不渲染 */}
             {detailMetrics.length > 0 && (
               <div className="rounded-xl bg-white/70 backdrop-blur-sm p-2 lg:p-3 shadow-sm border border-white/50">
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
                   {detailMetrics.map((m) => (
                     <div key={m.label} className="text-center py-1">
-                      <div className="font-bold text-[#5a6fd8]">{formatMetric(m.value)} {m.unit}</div>
+                      <div className={`font-bold ${isCooked ? 'text-emerald-600' : 'text-[#5a6fd8]'}`}>{formatMetric(m.value)} {m.unit}</div>
                       <div className="text-gray-400 mt-0.5">{m.label}</div>
                     </div>
                   ))}
@@ -525,8 +595,9 @@ export default function RecordsPage() {
             <div className="w-6" />
             <div className="flex-1 flex items-center gap-4 min-w-0">
               <div className="w-[130px] text-center flex-shrink-0">时间</div>
-              <div className="flex-1 text-center">食材</div>
-              <div className="w-[80px] text-center flex-shrink-0">烹饪</div>
+              <div className="w-[90px] text-center flex-shrink-0">模式</div>
+              <div className="flex-1 text-center">食材/菜名</div>
+              <div className="w-[80px] text-center flex-shrink-0">烹饪方式</div>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
               <div className="w-[70px] text-right">热量</div>
@@ -548,7 +619,12 @@ export default function RecordsPage() {
             )}
             {!loading && items.map((record, recordIdx) => {
               const isExpanded = expandedId === record.id
-              const names = record.ingredient_names?.length ? record.ingredient_names : record.ingredients
+              // 熟菜功能开关：URL 加 ?show=cooked 启用，不加则一切照旧
+              const showCooked = typeof window !== 'undefined' && window.location.search.includes('show=cooked')
+              const isCooked = showCooked && record.record_mode === 'cooked'
+              const names = isCooked
+                ? [record.ingredients?.[0] || '成品菜']
+                : (record.ingredient_names?.length ? record.ingredient_names : record.ingredients)
               const methodLabel = cookingLabel(record)
               const isSelected = selectedIds.has(record.id)
               return (
@@ -557,7 +633,7 @@ export default function RecordsPage() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.3, delay: recordIdx * 0.05, ease: [0.4, 0, 0.2, 1] }}
-                  className={isExpanded ? "bg-[#f8f9ff]" : ""}
+                  className={isExpanded ? "bg-[#f8f9ff]" : (isCooked ? "bg-emerald-50/40" : "")}
                 >
                   {/* 概要行 — 桌面端 */}
                   <div
@@ -587,13 +663,30 @@ export default function RecordsPage() {
                       <span className="text-sm text-gray-700 whitespace-nowrap flex-shrink-0 w-[130px] text-center">
                         {formatDateTime(record.created_at)}
                       </span>
-                      {/* 食材 — 居中 + 加粗 */}
-                      <span className="text-sm font-semibold text-gray-800 min-w-0 truncate flex-1 text-center">
-                        {names.join("、")}
+                      {/* 模式标签 — 独立列，与表头"模式"对齐 */}
+                      <span className="flex-shrink-0 w-[90px] flex justify-center">
+                        <RecordModeTag mode={record.record_mode || "raw"} size="md" />
                       </span>
-                      {/* 烹饪方式 — 居中 + 彩色背景 */}
+                      {/* 食材/菜名 — 菜品模式用绿色，菜名后显示克重 */}
+                      <span className="text-sm font-semibold min-w-0 truncate flex-1 text-center flex items-center justify-center gap-1">
+                        <span className={`truncate ${isCooked ? 'text-emerald-700' : 'text-gray-800'}`}>
+                          {names.join("、")}
+                        </span>
+                        {isCooked && record.cooked_weight_g != null && (
+                          <span className="text-[10px] text-emerald-500 font-normal whitespace-nowrap">
+                            {Math.round(record.cooked_weight_g)}g
+                          </span>
+                        )}
+                      </span>
+                      {/* 烹饪方式 — 菜品模式显示"熟食"，食材模式显示烹饪方式标签 */}
                       <span className="flex-shrink-0 w-[80px] flex justify-center">
-                        <CookingTag method={record.cooking_method} label={methodLabel} />
+                        {isCooked ? (
+                          <CookingTag method="cooked" label="熟食" />
+                        ) : record.cooking_method ? (
+                          <CookingTag method={record.cooking_method} label={methodLabel} />
+                        ) : (
+                          <span className="text-xs text-gray-400">-</span>
+                        )}
                       </span>
                     </div>
 
@@ -651,7 +744,7 @@ export default function RecordsPage() {
                         </span>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        <CookingTag method={record.cooking_method} label={methodLabel} />
+                        {isCooked ? <CookingTag method="cooked" label="熟食" /> : <CookingTag method={record.cooking_method} label={methodLabel} />}
                         <button type="button"
                           onClick={(e) => { e.stopPropagation(); handleEditRecord(record) }}
                           className="rounded-full p-0.5 text-[#667eea] hover:bg-[#667eea]/10 transition-all"
@@ -674,9 +767,17 @@ export default function RecordsPage() {
                       </div>
                     </div>
 
-                    {/* 食材名称 */}
-                    <div className="text-[11px] lg:text-sm font-semibold text-gray-800 truncate mb-0.5">
-                      {names.join("、")}
+                    {/* 食材/菜名 + 模式标签 + 克重(菜品) */}
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <RecordModeTag mode={record.record_mode || "raw"} size="sm" />
+                      <span className={`text-[11px] lg:text-sm font-semibold truncate ${isCooked ? 'text-emerald-700' : 'text-gray-800'}`}>
+                        {names.join("、")}
+                      </span>
+                      {isCooked && record.cooked_weight_g != null && (
+                        <span className="ml-auto text-[9px] font-semibold text-emerald-600 bg-emerald-50 rounded px-1 py-0.5 whitespace-nowrap">
+                          {Math.round(record.cooked_weight_g)}g
+                        </span>
+                      )}
                     </div>
 
                     {/* 营养值 — 单行水平 pills */}
@@ -718,63 +819,104 @@ export default function RecordsPage() {
         </CardContent>
       </Card>
 
-      {/* 编辑称重记录弹窗 — 紧凑版 + 居中 */}
-      {editingRecord && (
+      {/* 编辑称重记录弹窗 — 紧凑版 + 居中，根据模式切换主题色 */}
+      {editingRecord && (() => {
+        const editIsCooked = editingRecord.record_mode === 'cooked'
+        // 主题色：食材模式=蓝紫，菜品模式=翠绿
+        const tBg = editIsCooked
+          ? "linear-gradient(135deg, rgba(209,250,229,0.95) 0%, rgba(220,252,231,0.95) 50%, rgba(236,253,245,0.95) 100%)"
+          : "linear-gradient(135deg, rgba(200,210,255,0.95) 0%, rgba(220,215,248,0.95) 50%, rgba(235,230,252,0.95) 100%)"
+        const tBorder = editIsCooked ? "1px solid rgba(187,247,208,0.6)" : "1px solid rgba(200,195,235,0.5)"
+        const tText = editIsCooked ? "#065f46" : "#4540a0"           // 标题色
+        const tLabel = editIsCooked ? "#047857" : "#5a5fcf"          // 字段标签色
+        const tLabelSub = editIsCooked ? "#10b981" : "#8b8fd4"       // 次级标签色
+        const tBorderInput = editIsCooked ? "#a7f3d0" : "#c8c3eb"    // 输入框边框
+        const tFocus = editIsCooked ? "#10b981" : "#667eea"          // 聚焦色
+        const tBtnBg = editIsCooked ? "rgba(16,185,129,0.15)" : "rgba(102,126,234,0.15)"
+        const tBtnBgHover = editIsCooked ? "rgba(16,185,129,0.25)" : "rgba(102,126,234,0.25)"
+        const tBtnText = editIsCooked ? "#047857" : "#5a5fcf"
+        const tAddText = editIsCooked ? "#10b981" : "#667eea"
+        const tSaveFrom = editIsCooked ? "#10b981" : "#667eea"
+        const tSaveTo = editIsCooked ? "#059669" : "#764ba2"
+        // 字段提示词随模式切换
+        const itemsLabel = editIsCooked ? "菜品名称" : "食材明细"
+        const itemPlaceholder = editIsCooked ? "菜名" : "食材名"
+        const addItemText = editIsCooked ? "+ 添加菜品" : "+ 添加食材"
+        const weightLabel = editIsCooked ? "菜品克重(g)" : "熟重(g)"
+        const titleText = editIsCooked ? "编辑菜品称重记录" : "编辑食材称重记录"
+        const inputCls = `w-full rounded-lg border bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none transition-colors`
+        const inputStyle = { borderColor: tBorderInput } as const
+        return (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-2 py-4" onClick={() => setEditingRecord(null)}>
           <div
             className="w-full max-w-lg rounded-2xl p-3 shadow-2xl max-h-[88vh] overflow-y-auto overscroll-contain relative"
-            style={{
-              background: "linear-gradient(135deg, rgba(200,210,255,0.95) 0%, rgba(220,215,248,0.95) 50%, rgba(235,230,252,0.95) 100%)",
-              backdropFilter: "blur(20px)",
-              border: "1px solid rgba(200,195,235,0.5)",
-            }}
+            style={{ background: tBg, backdropFilter: "blur(20px)", border: tBorder }}
             onClick={e => e.stopPropagation()}
           >
             <button
               type="button" onClick={() => setEditingRecord(null)}
-              className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full bg-[#667eea]/15 hover:bg-[#667eea]/25 text-[#5a5fcf] text-xs leading-none transition font-bold"
+              className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full text-xs leading-none transition font-bold"
+              style={{ backgroundColor: tBtnBg, color: tBtnText }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = tBtnBgHover)}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = tBtnBg)}
             >✕</button>
 
-            <h3 className="text-base font-semibold text-[#4540a0] mb-2">编辑称重记录</h3>
+            <h3 className="text-base font-semibold mb-2" style={{ color: tText }}>{titleText}</h3>
 
             <div className="space-y-2">
-              {/* 第一行：用餐时间 + 烹饪方式 */}
+              {/* 第一行：用餐时间 + 烹饪方式（菜品模式不显示烹饪方式，本身是成品菜） */}
               <div className="flex items-end gap-2">
                 <div className="flex-1">
-                  <label className="block text-[10px] font-medium text-[#5a5fcf] mb-0.5">用餐时间</label>
+                  <label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabel }}>用餐时间</label>
                   <input type="datetime-local" value={editDateTime}
                     onChange={e => setEditDateTime(e.target.value)}
-                    className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 h-8 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                    className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                    onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                 </div>
-                <div className="w-[100px] flex-shrink-0">
-                  <label className="block text-[10px] font-medium text-[#5a5fcf] mb-0.5">烹饪方式</label>
-                  <select value={editCookingMethod} onChange={e => setEditCookingMethod(e.target.value)}
-                    className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 text-gray-800 px-1.5 h-8 text-xs outline-none focus:border-[#667eea]">
-                    <option value="raw">生食</option>
-                    <option value="boil">煮</option><option value="steam">蒸</option>
-                    <option value="stir_fry">炒</option><option value="braise">炖</option>
-                    <option value="roast">烤</option><option value="pan_fry">煎</option>
-                    <option value="deep_fry">炸</option>
-                  </select>
-                </div>
+                {!editIsCooked && (
+                  <div className="w-[100px] flex-shrink-0">
+                    <label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabel }}>烹饪方式</label>
+                    <select value={editCookingMethod} onChange={e => setEditCookingMethod(e.target.value)}
+                      className={inputCls + " px-1.5 h-8"} style={inputStyle}
+                      onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                      onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)}>
+                      <option value="raw">食材</option>
+                      <option value="boil">煮</option><option value="steam">蒸</option>
+                      <option value="stir_fry">炒</option><option value="braise">炖</option>
+                      <option value="roast">烤</option><option value="pan_fry">煎</option>
+                      <option value="deep_fry">炸</option>
+                    </select>
+                  </div>
+                )}
+                {editIsCooked && (
+                  <div className="flex-shrink-0 self-stretch flex items-center rounded-lg px-2.5 text-[10px] font-bold text-white"
+                    style={{ backgroundImage: `linear-gradient(135deg, #10b981, #059669)` }}>
+                    <Utensils className="h-3 w-3 mr-1" />菜品模式
+                  </div>
+                )}
               </div>
 
-              {/* 食材逐行编辑 */}
+              {/* 食材/菜品逐行编辑 */}
               <div>
                 <div className="flex items-center justify-between mb-0.5">
-                  <label className="text-[10px] font-medium text-[#5a5fcf]">食材明细</label>
+                  <label className="text-[10px] font-medium" style={{ color: tLabel }}>{itemsLabel}</label>
                   <button type="button" onClick={() => setEditItems([...editItems, { name: "", weight: "" }])}
-                    className="text-[10px] text-[#667eea] hover:underline font-medium">+ 添加食材</button>
+                    className="text-[10px] hover:underline font-medium" style={{ color: tAddText }}>{addItemText}</button>
                 </div>
                 <div className="space-y-1.5">
                   {editItems.map((item, i) => (
                     <div key={i} className="flex items-center gap-1.5">
-                      <input value={item.name} placeholder="食材名"
+                      <input value={item.name} placeholder={itemPlaceholder}
                         onChange={e => { const next = [...editItems]; next[i] = { ...next[i], name: e.target.value }; setEditItems(next) }}
-                        className="flex-1 rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                        className="flex-1 rounded-lg border bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none transition-colors" style={inputStyle}
+                        onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                        onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                       <input type="number" value={item.weight} placeholder="克数"
                         onChange={e => { const next = [...editItems]; next[i] = { ...next[i], weight: e.target.value }; setEditItems(next) }}
-                        className="w-16 rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                        className="w-16 rounded-lg border bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none transition-colors" style={inputStyle}
+                        onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                        onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                       <span className="text-[10px] text-gray-400">g</span>
                       {editItems.length > 1 && (
                         <button type="button" onClick={() => setEditItems(editItems.filter((_, j) => j !== i))}
@@ -788,53 +930,69 @@ export default function RecordsPage() {
               {/* 营养数据 — 核心6字段，3列网格更紧凑 */}
               <div className="grid grid-cols-3 gap-1.5">
                 <div>
-                  <label className="block text-[10px] font-medium text-[#5a5fcf] mb-0.5">熟重(g)</label>
+                  <label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabel }}>{weightLabel}</label>
                   <input type="number" value={editWeight} onChange={e => setEditWeight(e.target.value)}
-                    className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                    className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                    onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-[#5a5fcf] mb-0.5">热量(kcal)</label>
+                  <label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabel }}>热量(kcal)</label>
                   <input type="number" value={editEnergy} onChange={e => setEditEnergy(e.target.value)}
-                    className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                    className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                    onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-[#5a5fcf] mb-0.5">蛋白质(g)</label>
+                  <label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabel }}>蛋白质(g)</label>
                   <input type="number" value={editProtein} onChange={e => setEditProtein(e.target.value)}
-                    className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                    className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                    onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-[#5a5fcf] mb-0.5">脂肪(g)</label>
+                  <label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabel }}>脂肪(g)</label>
                   <input type="number" value={editFat} onChange={e => setEditFat(e.target.value)}
-                    className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                    className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                    onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-[#5a5fcf] mb-0.5">碳水(g)</label>
+                  <label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabel }}>碳水(g)</label>
                   <input type="number" value={editCarb} onChange={e => setEditCarb(e.target.value)}
-                    className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" />
+                    className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)}
+                    onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} />
                 </div>
               </div>
 
               {/* 详细营养素 — 折叠收起 */}
               <button type="button"
                 onClick={() => setShowDetailNutrients(!showDetailNutrients)}
-                className="flex items-center gap-1 text-[10px] text-[#8b8fd4] hover:text-[#667eea] transition-colors">
+                className="flex items-center gap-1 text-[10px] transition-colors" style={{ color: tLabelSub }}>
                 <span>{showDetailNutrients ? "▾" : "▸"}</span>
                 {showDetailNutrients ? "收起" : "更多营养（钠、胆固醇等）"}
               </button>
               {showDetailNutrients && (
               <div className="grid grid-cols-3 gap-1.5">
-                <div><label className="block text-[10px] font-medium text-[#8b8fd4] mb-0.5">钠(mg)</label>
-                  <input type="number" value={editSodium} onChange={e => setEditSodium(e.target.value)} className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" /></div>
-                <div><label className="block text-[10px] font-medium text-[#8b8fd4] mb-0.5">胆固醇</label>
-                  <input type="number" value={editCholesterol} onChange={e => setEditCholesterol(e.target.value)} className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" /></div>
-                <div><label className="block text-[10px] font-medium text-[#8b8fd4] mb-0.5">维生素C</label>
-                  <input type="number" value={editVitC} onChange={e => setEditVitC(e.target.value)} className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" /></div>
-                <div><label className="block text-[10px] font-medium text-[#8b8fd4] mb-0.5">钙(mg)</label>
-                  <input type="number" value={editCalcium} onChange={e => setEditCalcium(e.target.value)} className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" /></div>
-                <div><label className="block text-[10px] font-medium text-[#8b8fd4] mb-0.5">铁(mg)</label>
-                  <input type="number" value={editIron} onChange={e => setEditIron(e.target.value)} className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" /></div>
-                <div><label className="block text-[10px] font-medium text-[#8b8fd4] mb-0.5">钾(mg)</label>
-                  <input type="number" value={editPotassium} onChange={e => setEditPotassium(e.target.value)} className="w-full rounded-lg border border-[#c8c3eb] bg-white/70 px-2 py-1.5 text-xs text-gray-800 outline-none focus:border-[#667eea]" /></div>
+                <div><label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabelSub }}>钠(mg)</label>
+                  <input type="number" value={editSodium} onChange={e => setEditSodium(e.target.value)} className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)} onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} /></div>
+                <div><label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabelSub }}>胆固醇</label>
+                  <input type="number" value={editCholesterol} onChange={e => setEditCholesterol(e.target.value)} className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)} onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} /></div>
+                <div><label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabelSub }}>维生素C</label>
+                  <input type="number" value={editVitC} onChange={e => setEditVitC(e.target.value)} className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)} onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} /></div>
+                <div><label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabelSub }}>钙(mg)</label>
+                  <input type="number" value={editCalcium} onChange={e => setEditCalcium(e.target.value)} className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)} onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} /></div>
+                <div><label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabelSub }}>铁(mg)</label>
+                  <input type="number" value={editIron} onChange={e => setEditIron(e.target.value)} className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)} onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} /></div>
+                <div><label className="block text-[10px] font-medium mb-0.5" style={{ color: tLabelSub }}>钾(mg)</label>
+                  <input type="number" value={editPotassium} onChange={e => setEditPotassium(e.target.value)} className={inputCls} style={inputStyle}
+                    onFocus={e => (e.currentTarget.style.borderColor = tFocus)} onBlur={e => (e.currentTarget.style.borderColor = tBorderInput)} /></div>
               </div>
               )}
 
@@ -842,17 +1000,20 @@ export default function RecordsPage() {
 
             <div className="flex justify-end gap-2 mt-2">
               <button onClick={() => setEditingRecord(null)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-[#5a5fcf] bg-white/60 hover:bg-white/90 transition border border-[#c8c3eb]">
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/60 hover:bg-white/90 transition border"
+                style={{ color: tBtnText, borderColor: tBorderInput }}>
                 取消
               </button>
               <button onClick={handleSaveRecord} disabled={savingRecordId === editingRecord.id}
-                className="px-4 py-1.5 rounded-lg text-xs font-medium text-white bg-gradient-to-r from-[#667eea] to-[#764ba2] hover:shadow-lg transition disabled:opacity-50">
+                className="px-4 py-1.5 rounded-lg text-xs font-medium text-white hover:shadow-lg transition disabled:opacity-50"
+                style={{ backgroundImage: `linear-gradient(to right, ${tSaveFrom}, ${tSaveTo})` }}>
                 {savingRecordId === editingRecord.id ? "保存中..." : "保存"}
               </button>
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
     </AppShell>
   )
 }

@@ -34,6 +34,7 @@ func (s *MealService) RecordWeighIn(ctx context.Context, userID int, req *model.
 		Ingredients:       req.Ingredients,
 		RawWeightsG:       req.RawWeightsG,
 		CookingMethod:     req.CookingMethod,
+		RecordMode:        "raw", // 嵌入式端默认生食材模式
 		CookedWeightG:     v(req.CookedWeightG),
 		CookedEnergyKcal:  v(req.CookedEnergyKcal),
 		CookedProteinG:    v(req.CookedProteinG),
@@ -84,6 +85,7 @@ func (s *MealService) GetHistoryRecords(ctx context.Context, userID int, page, p
 			Ingredients:       rec.Ingredients,
 			RawWeightsG:       rec.RawWeightsG,
 			CookingMethod:     rec.CookingMethod,
+			RecordMode:        rec.RecordMode,
 			CookedWeightG:     rec.CookedWeightG,
 			CookedEnergyKcal:  rec.CookedEnergyKcal,
 			CookedProteinG:    rec.CookedProteinG,
@@ -132,6 +134,73 @@ func (s *MealService) GetHistoryRecords(ctx context.Context, userID int, page, p
 // GetDailySummary 获取单日营养摘要
 func (s *MealService) GetDailySummary(ctx context.Context, userID int, date time.Time) (*model.NutritionSummary, error) {
 	return s.mealRepo.GetDailyStats(ctx, userID, date)
+}
+
+// RecordCookedWeighIn 熟食称重：查 dish_nutrition 表 → 按比例算营养 → 写 weigh_records
+func (s *MealService) RecordCookedWeighIn(ctx context.Context, userID int, req *model.CookedWeighInRequest) (*model.WeighRecord, error) {
+	// 1. 查菜库
+	dish, err := s.mealRepo.FindDishNutritionByName(ctx, req.DishName)
+	if err != nil {
+		return nil, fmt.Errorf("查询熟菜营养失败: %w", err)
+	}
+	if dish == nil {
+		return nil, fmt.Errorf("菜库未收录此菜: %s", req.DishName)
+	}
+
+	// 2. 按比例计算（dish_nutrition 是每100g的值）
+	ratio := req.WeightG / 100.0
+	v := func(f float64) *float64 { return &f }
+
+	// 3. 解析 created_at（RFC3339 或 datetime-local 格式）
+	createdAt := time.Now()
+	if req.CreatedAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.CreatedAt); err == nil {
+			createdAt = t
+		} else if t, err := time.Parse("2006-01-02T15:04", req.CreatedAt); err == nil {
+			loc := time.FixedZone("CST", 8*3600)
+			createdAt = t.In(loc)
+		}
+	}
+
+	// 4. 构造 record（复用 ingredients[0] 存菜名，raw_weights_g[0] 存总克重）
+	record := &model.WeighRecord{
+		UserID:              userID,
+		Ingredients:         []string{dish.NameZh},
+		RawWeightsG:         []float64{req.WeightG},
+		CookingMethod:       "cooked", // 熟食：cooking_method=cooked（DB CHECK约束允许），前端通过 record_mode 判断
+		RecordMode:          "cooked",
+		CookedWeightG:       v(req.WeightG),
+		CookedEnergyKcal:    v(dish.EnergyKcal * ratio),
+		CookedProteinG:      v(dish.ProteinG * ratio),
+		CookedFatG:          v(dish.FatG * ratio),
+		CookedCarbohydrateG: v(dish.CarbohydrateG * ratio),
+		CookedSodiumMg:      v(dish.SodiumMg * ratio),
+		CookedCholesterolMg: v(dish.CholesterolMg * ratio),
+		CookedVitaminCMg:    v(dish.VitaminCMg * ratio),
+		CookedCalciumMg:     v(dish.CalciumMg * ratio),
+		CookedIronMg:        v(dish.IronMg * ratio),
+		CookedPotassiumMg:   v(dish.PotassiumMg * ratio),
+		CreatedAt:           createdAt,
+	}
+
+	// 5. 写库
+	if err := s.mealRepo.CreateWeighRecord(ctx, record); err != nil {
+		return nil, fmt.Errorf("failed to save cooked weigh record: %w", err)
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"user_id":  userID,
+		"dish":     dish.NameZh,
+		"weight_g": req.WeightG,
+		"energy":   record.CookedEnergyKcal,
+	}).Info("Cooked weigh-in recorded successfully")
+
+	return record, nil
+}
+
+// ListDishes 列出所有熟菜菜名（前端下拉用）
+func (s *MealService) ListDishes(ctx context.Context) ([]*model.DishNutrition, error) {
+	return s.mealRepo.ListDishNutritions(ctx)
 }
 
 // GetRecentMeals 获取最近餐食

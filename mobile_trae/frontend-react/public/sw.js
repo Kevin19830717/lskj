@@ -1,5 +1,5 @@
 // 智能饮食健康秤 — Service Worker (离线缓存 + PWA)
-const CACHE = "smart-scale-v2"
+const CACHE = "smart-scale-v4"
 
 self.addEventListener("install", (e) => {
   self.skipWaiting()

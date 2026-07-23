@@ -42,6 +42,38 @@ func (h *MealHandler) RecordWeighIn(c *gin.Context) {
 	c.JSON(http.StatusCreated, model.Success(record))
 }
 
+// RecordCookedWeighIn 熟食称重上报（App端直接录入成品菜）
+// POST /api/v1/weigh-in/cooked
+// Body: { dish_name, weight_g, created_at? }
+func (h *MealHandler) RecordCookedWeighIn(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+
+	var req model.CookedWeighInRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "Invalid request: "+err.Error()))
+		return
+	}
+
+	record, err := h.mealService.RecordCookedWeighIn(c.Request.Context(), int(userID), &req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusCreated, model.Success(record))
+}
+
+// ListDishes 列出所有熟菜菜名（前端菜名下拉用）
+// GET /api/v1/dishes
+func (h *MealHandler) ListDishes(c *gin.Context) {
+	dishes, err := h.mealService.ListDishes(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to list dishes"))
+		return
+	}
+	c.JSON(http.StatusOK, model.Success(dishes))
+}
+
 // RecordWeighInTest 测试用称重数据上报接口（免JWT认证，仅供嵌入式端联调测试）
 // POST /api/v1/test/weigh-in?user_id=1
 // 复用正式接口的 WeighInRequest 结构与业务逻辑，user_id 通过 query 参数指定，默认为 1。

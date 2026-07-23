@@ -24,12 +24,12 @@ func (r *MealRepository) CreateWeighRecord(ctx context.Context, record *model.We
 	weightsJSON, _ := json.Marshal(record.RawWeightsG)
 
 	query := `INSERT INTO weigh_records (
-		user_id, ingredients, raw_weights_g, cooking_method,
-		cooked_weight_g, cooked_energy_kcal, cooked_protein_g, cooked_fat_g, 
-		cooked_carbohydrate_g, cooked_sodium_mg, cooked_cholesterol_mg, 
-		cooked_vitamin_c_mg, cooked_calcium_mg, cooked_iron_mg, cooked_potassium_mg, 
+		user_id, ingredients, raw_weights_g, cooking_method, record_mode,
+		cooked_weight_g, cooked_energy_kcal, cooked_protein_g, cooked_fat_g,
+		cooked_carbohydrate_g, cooked_sodium_mg, cooked_cholesterol_mg,
+		cooked_vitamin_c_mg, cooked_calcium_mg, cooked_iron_mg, cooked_potassium_mg,
 		created_at
-	) VALUES ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+	) VALUES ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 	RETURNING id`
 
 	err := database.Pool.QueryRow(ctx, query,
@@ -37,6 +37,7 @@ func (r *MealRepository) CreateWeighRecord(ctx context.Context, record *model.We
 		ingredientsJSON,
 		weightsJSON,
 		record.CookingMethod,
+		record.RecordMode,
 		record.CookedWeightG,
 		record.CookedEnergyKcal,
 		record.CookedProteinG,
@@ -81,9 +82,9 @@ func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page
 			OR cooking_method ILIKE $%d
 			OR EXISTS (SELECT 1 FROM foods f WHERE f.name ILIKE $%d AND ingredients::jsonb ? f.name_en)
 			OR EXISTS (SELECT 1 FROM (VALUES
-				('boil','煮'),('braise','炖'),('deep_fry','炸'),('pan_fry','煎'),
-				('roast','烤'),('steam','蒸'),('stir_fry','炒'),('raw','生食')
-			) AS cm(en, zh) WHERE cm.zh ILIKE $%d AND cooking_method = cm.en)
+			('boil','煮'),('braise','炖'),('deep_fry','炸'),('pan_fry','煎'),
+			('roast','烤'),('steam','蒸'),('stir_fry','炒'),('raw','生食'),('cooked','熟食')
+		) AS cm(en, zh) WHERE cm.zh ILIKE $%d AND cooking_method = cm.en)
 		)`, paramIdx, paramIdx, paramIdx, paramIdx)
 		countParams = append(countParams, "%"+search+"%")
 		paramIdx++
@@ -97,7 +98,7 @@ func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page
 	offset := (page - 1) * pageSize
 	dataParams := append(countParams, pageSize, offset)
 	dataQuery := fmt.Sprintf(`
-		SELECT id, user_id, ingredients, raw_weights_g, cooking_method,
+		SELECT id, user_id, ingredients, raw_weights_g, cooking_method, record_mode,
 		       cooked_weight_g, cooked_energy_kcal, cooked_protein_g, cooked_fat_g,
 		       cooked_carbohydrate_g, cooked_sodium_mg, cooked_cholesterol_mg,
 		       cooked_vitamin_c_mg, cooked_calcium_mg, cooked_iron_mg, cooked_potassium_mg,
@@ -117,7 +118,7 @@ func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page
 		var ingredientsJSON, weightsJSON []byte
 
 		err := rows.Scan(
-			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod,
+			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod, &rec.RecordMode,
 			&rec.CookedWeightG, &rec.CookedEnergyKcal, &rec.CookedProteinG, &rec.CookedFatG,
 			&rec.CookedCarbohydrateG, &rec.CookedSodiumMg, &rec.CookedCholesterolMg,
 			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, 			&rec.CookedPotassiumMg,
@@ -138,12 +139,12 @@ func (r *MealRepository) QueryWeighRecords(ctx context.Context, userID int, page
 // QueryRecordsByDateRange 按日期范围查询记录（用于摘要生成）
 func (r *MealRepository) QueryRecordsByDateRange(ctx context.Context, userID int, start, end time.Time) ([]*model.WeighRecord, error) {
 	query := `
-		SELECT id, user_id, ingredients, raw_weights_g, cooking_method,
+		SELECT id, user_id, ingredients, raw_weights_g, cooking_method, record_mode,
 		       cooked_weight_g, cooked_energy_kcal, cooked_protein_g, cooked_fat_g,
 		       cooked_carbohydrate_g, cooked_sodium_mg, cooked_cholesterol_mg,
 		       cooked_vitamin_c_mg, cooked_calcium_mg, cooked_iron_mg, cooked_potassium_mg,
 		       created_at
-		FROM weigh_records 
+		FROM weigh_records
 		WHERE user_id = $1 AND created_at >= $2 AND created_at < $3
 		ORDER BY created_at ASC`
 
@@ -159,7 +160,7 @@ func (r *MealRepository) QueryRecordsByDateRange(ctx context.Context, userID int
 		var ingredientsJSON, weightsJSON []byte
 
 		if err := rows.Scan(
-			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod,
+			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod, &rec.RecordMode,
 			&rec.CookedWeightG, &rec.CookedEnergyKcal, &rec.CookedProteinG, &rec.CookedFatG,
 			&rec.CookedCarbohydrateG, &rec.CookedSodiumMg, &rec.CookedCholesterolMg,
 			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, 			&rec.CookedPotassiumMg,
@@ -179,7 +180,7 @@ func (r *MealRepository) QueryRecordsByDateRange(ctx context.Context, userID int
 // GetRecentMeals 获取最近N餐记录
 func (r *MealRepository) GetRecentMeals(ctx context.Context, userID int, limit int) ([]*model.WeighRecord, error) {
 	query := `
-		SELECT id, user_id, ingredients, raw_weights_g, cooking_method,
+		SELECT id, user_id, ingredients, raw_weights_g, cooking_method, record_mode,
 		       cooked_weight_g, cooked_energy_kcal, cooked_protein_g, cooked_fat_g,
 		       cooked_carbohydrate_g, cooked_sodium_mg, cooked_cholesterol_mg,
 		       cooked_vitamin_c_mg, cooked_calcium_mg, cooked_iron_mg, cooked_potassium_mg,
@@ -197,7 +198,7 @@ func (r *MealRepository) GetRecentMeals(ctx context.Context, userID int, limit i
 		var rec model.WeighRecord
 		var ingredientsJSON, weightsJSON []byte
 		if err := rows.Scan(
-			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod,
+			&rec.ID, &rec.UserID, &ingredientsJSON, &weightsJSON, &rec.CookingMethod, &rec.RecordMode,
 			&rec.CookedWeightG, &rec.CookedEnergyKcal, &rec.CookedProteinG, &rec.CookedFatG,
 			&rec.CookedCarbohydrateG, &rec.CookedSodiumMg, &rec.CookedCholesterolMg,
 			&rec.CookedVitaminCMg, &rec.CookedCalciumMg, &rec.CookedIronMg, 			&rec.CookedPotassiumMg,
@@ -504,4 +505,48 @@ func (r *MealRepository) DeleteWeighRecordsBatch(ctx context.Context, ids []int6
 		return 0, fmt.Errorf("failed to batch delete weigh records: %w", err)
 	}
 	return result.RowsAffected(), nil
+}
+
+// FindDishNutritionByName 按菜名精确查找熟菜营养信息（每100g营养值）
+func (r *MealRepository) FindDishNutritionByName(ctx context.Context, name string) (*model.DishNutrition, error) {
+	query := `SELECT id, name_zh, energy_kcal, protein_g, fat_g, carbohydrate_g,
+	                 sodium_mg, cholesterol_mg, vitamin_c_mg, calcium_mg, iron_mg, potassium_mg
+	          FROM dish_nutrition WHERE name_zh = $1`
+	var d model.DishNutrition
+	err := database.Pool.QueryRow(ctx, query, name).Scan(
+		&d.ID, &d.NameZh, &d.EnergyKcal, &d.ProteinG, &d.FatG, &d.CarbohydrateG,
+		&d.SodiumMg, &d.CholesterolMg, &d.VitaminCMg, &d.CalciumMg, &d.IronMg, &d.PotassiumMg,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to find dish nutrition: %w", err)
+	}
+	return &d, nil
+}
+
+// ListDishNutritions 列出所有熟菜（前端菜名下拉用）
+func (r *MealRepository) ListDishNutritions(ctx context.Context) ([]*model.DishNutrition, error) {
+	query := `SELECT id, name_zh, energy_kcal, protein_g, fat_g, carbohydrate_g,
+	                 sodium_mg, cholesterol_mg, vitamin_c_mg, calcium_mg, iron_mg, potassium_mg
+	          FROM dish_nutrition ORDER BY name_zh ASC`
+	rows, err := database.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list dish nutritions: %w", err)
+	}
+	defer rows.Close()
+
+	var dishes []*model.DishNutrition
+	for rows.Next() {
+		var d model.DishNutrition
+		if err := rows.Scan(
+			&d.ID, &d.NameZh, &d.EnergyKcal, &d.ProteinG, &d.FatG, &d.CarbohydrateG,
+			&d.SodiumMg, &d.CholesterolMg, &d.VitaminCMg, &d.CalciumMg, &d.IronMg, &d.PotassiumMg,
+		); err != nil {
+			continue
+		}
+		dishes = append(dishes, &d)
+	}
+	return dishes, nil
 }

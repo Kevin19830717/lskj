@@ -9,6 +9,7 @@ type WeighRecord struct {
 	Ingredients       []string        `json:"ingredients" db:"ingredients"`                   // ["chicken","carrot"]
 	RawWeightsG       []float64       `json:"raw_weights_g" db:"raw_weights_g"`               // [200,80]
 	CookingMethod     string          `json:"cooking_method,omitempty" db:"cooking_method"`    // boil/braise/deep_fry/pan_fry/roast/steam/stir_fry
+	RecordMode        string          `json:"record_mode,omitempty" db:"record_mode"`          // raw=生食材模式, cooked=熟菜/成品菜模式
 	CookedWeightG     *float64        `json:"cooked_weight_g,omitempty" db:"cooked_weight_g"`
 	CookedEnergyKcal  *float64        `json:"cooked_energy_kcal,omitempty" db:"cooked_energy_kcal"`
 	CookedProteinG    *float64        `json:"cooked_protein_g,omitempty" db:"cooked_protein_g"`
@@ -52,6 +53,7 @@ type WeighRecordResponse struct {
 	RawWeightsG       []float64       `json:"raw_weights_g"`
 	CookingMethod     string          `json:"cooking_method,omitempty"`
 	CookingMethodLabel string         `json:"cooking_method_label,omitempty"`
+	RecordMode        string          `json:"record_mode,omitempty"`                            // raw / cooked
 	CookedWeightG     *float64        `json:"cooked_weight_g,omitempty"`
 	CookedEnergyKcal  *float64        `json:"cooked_energy_kcal,omitempty"`
 	CookedProteinG    *float64        `json:"cooked_protein_g,omitempty"`
@@ -104,4 +106,27 @@ type NutritionItem struct {
 	ProteinG   float64 `json:"protein_g"`
 	FatG       float64 `json:"fat_g"`
 	CarbG      float64 `json:"carbohydrate_g"`
+}
+
+// CookedWeighInRequest 熟食称重上报请求
+type CookedWeighInRequest struct {
+	DishName  string  `json:"dish_name" binding:"required,min=1,max=50"` // 菜名，如"番茄炒蛋"
+	WeightG   float64 `json:"weight_g"   binding:"required,gt=0"`        // 实际食用克重
+	CreatedAt string  `json:"created_at,omitempty"`                       // 用餐时间(RFC3339)，可选，缺省=NOW
+}
+
+// DishNutrition 熟菜营养库（每100g营养值）
+type DishNutrition struct {
+	ID              int64   `json:"id" db:"id"`
+	NameZh          string  `json:"name_zh" db:"name_zh"`
+	EnergyKcal      float64 `json:"energy_kcal" db:"energy_kcal"`
+	ProteinG        float64 `json:"protein_g" db:"protein_g"`
+	FatG            float64 `json:"fat_g" db:"fat_g"`
+	CarbohydrateG   float64 `json:"carbohydrate_g" db:"carbohydrate_g"`
+	SodiumMg        float64 `json:"sodium_mg" db:"sodium_mg"`
+	CholesterolMg   float64 `json:"cholesterol_mg" db:"cholesterol_mg"`
+	VitaminCMg      float64 `json:"vitamin_c_mg" db:"vitamin_c_mg"`
+	CalciumMg       float64 `json:"calcium_mg" db:"calcium_mg"`
+	IronMg          float64 `json:"iron_mg" db:"iron_mg"`
+	PotassiumMg     float64 `json:"potassium_mg" db:"potassium_mg"`
 }

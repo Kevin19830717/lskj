@@ -58,8 +58,10 @@ export function cookingColor(method?: string) {
 }
 
 function cookingLabel(record: WeighRecord) {
+  if (record.record_mode === 'cooked') return '成品菜'
   return record.cooking_method_label || record.cooking_method || "-"
 }
+
 
 // ============================================================
 // 烹饪方式标签 — 简单彩色背景（不用渐变标签框）
@@ -537,7 +539,12 @@ export default function RecordsPage() {
             )}
             {!loading && items.map((record, recordIdx) => {
               const isExpanded = expandedId === record.id
-              const names = record.ingredient_names?.length ? record.ingredient_names : record.ingredients
+              // 熟菜功能开关：URL 加 ?show=cooked 启用
+              const showCooked = typeof window !== 'undefined' && window.location.search.includes('show=cooked')
+              const isCooked = showCooked && record.record_mode === 'cooked'
+              const names = isCooked
+                ? [record.ingredients?.[0] || '成品菜']
+                : (record.ingredient_names?.length ? record.ingredient_names : record.ingredients)
               const methodLabel = cookingLabel(record)
               const isSelected = selectedIds.has(record.id)
               return (
@@ -576,8 +583,9 @@ export default function RecordsPage() {
                       <span className="text-sm text-gray-700 whitespace-nowrap flex-shrink-0 w-[130px] text-center">
                         {formatDateTime(record.created_at)}
                       </span>
-                      {/* 食材 — 居中 + 加粗 */}
-                      <span className="text-sm font-semibold text-gray-800 min-w-0 truncate flex-1 text-center">
+                      {/* 食材/菜名 — 熟菜绿色标识 */}
+                      <span className={`text-sm font-semibold min-w-0 truncate flex-1 text-center ${isCooked ? 'text-emerald-600' : 'text-gray-800'}`}>
+                        {isCooked && <span className="mr-1 text-[10px]">成品菜</span>}
                         {names.join("、")}
                       </span>
                       {/* 烹饪方式 — 居中 + 彩色背景 */}
@@ -663,8 +671,9 @@ export default function RecordsPage() {
                       </div>
                     </div>
 
-                    {/* 食材名称 */}
-                    <div className="text-xs lg:text-sm font-semibold text-gray-800 truncate mb-1">
+                    {/* 食材/菜名 */}
+                    <div className={`text-xs lg:text-sm font-semibold truncate mb-1 ${isCooked ? 'text-emerald-600' : 'text-gray-800'}`}>
+                      {isCooked && <span className="mr-1 text-[10px] text-emerald-500">成品菜 </span>}
                       {names.join("、")}
                     </div>
 
