@@ -2,6 +2,7 @@
 RAG API 路由
 提供文本向量化、向量检索、健康建议生成、体检报告解析等端点
 """
+import json
 import logging
 from typing import List
 
@@ -1230,8 +1231,14 @@ async def _build_user_context(user_id: int) -> str:
                 from collections import Counter
                 food_cnt = Counter()
                 for r in rows:
-                    for ing in (r["ingredients"] or []):
-                        food_cnt[ing] += 1
+                    ings = r["ingredients"]
+                    # 兼容 JSONB 返回 list 或 JSON 字符串两种情况
+                    if isinstance(ings, str):
+                        try: ings = json.loads(ings)
+                        except: ings = []
+                    for ing in (ings or []):
+                        if isinstance(ing, str) and len(ing) > 1:  # 过滤单字/单字符噪声
+                            food_cnt[ing] += 1
                 if food_cnt:
                     top = "、".join(f"{k}({v}次)" for k, v in food_cnt.most_common(5))
                     parts.append(f"高频食材：{top}。")
@@ -1249,7 +1256,14 @@ async def _build_user_context(user_id: int) -> str:
                              f"目标：{goal_map.get(profile['health_goal'], '未设定')}。")
                 allergies = profile["allergies"]
                 if allergies:
-                    parts.append(f"过敏：{', '.join(allergies)}。")
+                    # 兼容 JSONB 数组或逗号分隔文本
+                    if isinstance(allergies, str):
+                        try:
+                            allergies = json.loads(allergies)
+                        except:
+                            allergies = [a.strip() for a in allergies.split(",") if a.strip()]
+                    if isinstance(allergies, list) and len(allergies) > 0:
+                        parts.append(f"过敏：{', '.join(str(a) for a in allergies)}。")
     except Exception as e:
         logger.warning(f"Failed to build user context: {e}")
     

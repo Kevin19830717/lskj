@@ -1,0 +1,170 @@
+{
+  "feature_cols": [
+    "ing_apple",
+    "ing_banana",
+    "ing_beef",
+    "ing_bell_pepper",
+    "ing_cabbage",
+    "ing_carrot",
+    "ing_cauliflower",
+    "ing_chicken",
+    "ing_cucumber",
+    "ing_egg",
+    "ing_eggplant",
+    "ing_fish",
+    "ing_garlic",
+    "ing_ginger",
+    "ing_grape",
+    "ing_kiwi",
+    "ing_kumquat",
+    "ing_lemon",
+    "ing_onion",
+    "ing_orange",
+    "ing_peach",
+    "ing_pepper",
+    "ing_pineapple",
+    "ing_pork",
+    "ing_potato",
+    "ing_shrimp",
+    "ing_small_pepper",
+    "ing_strawberry",
+    "ing_tofu",
+    "ing_tomato",
+    "ing_watermelon",
+    "raw_weight_1",
+    "raw_weight_2",
+    "raw_weight_3",
+    "raw_weight_4",
+    "raw_weight_total",
+    "raw_weight_mean",
+    "n_ingredients",
+    "has_fruit",
+    "has_meat",
+    "cooking_method_enc"
+  ],
+  "target_cols": [
+    "cooked_weight_g",
+    "cooked_energy_kcal",
+    "cooked_protein_g",
+    "cooked_fat_g",
+    "cooked_carbohydrate_g",
+    "cooked_sodium_mg",
+    "cooked_cholesterol_mg",
+    "cooked_vitamin_c_mg",
+    "cooked_calcium_mg",
+    "cooked_iron_mg",
+    "cooked_potassium_mg"
+  ],
+  "method_mapping": {
+    "boil": 0,
+    "braise": 1,
+    "deep_fry": 2,
+    "pan_fry": 3,
+    "roast": 4,
+    "steam": 5,
+    "stir_fry": 6
+  },
+  "all_ingredients": [
+    "apple",
+    "banana",
+    "beef",
+    "bell_pepper",
+    "cabbage",
+    "carrot",
+    "cauliflower",
+    "chicken",
+    "cucumber",
+    "egg",
+    "eggplant",
+    "fish",
+    "garlic",
+    "ginger",
+    "grape",
+    "kiwi",
+    "kumquat",
+    "lemon",
+    "onion",
+    "orange",
+    "peach",
+    "pepper",
+    "pineapple",
+    "pork",
+    "potato",
+    "shrimp",
+    "small_pepper",
+    "strawberry",
+    "tofu",
+    "tomato",
+    "watermelon"
+  ],
+  "seed": 42,
+  "test_size": 0.2,
+  "metrics": {
+    "cooked_weight_g": {
+      "rmse": 16.76109896540177,
+      "mae": 11.69844294890646,
+      "r2": 0.9972760361902271,
+      "mape": 4.079293336816015
+    },
+    "cooked_energy_kcal": {
+      "rmse": 116.4814539106447,
+      "mae": 58.84316658163995,
+      "r2": 0.9459342511090226,
+      "mape": 17.197753720151994
+    },
+    "cooked_protein_g": {
+      "rmse": 9.035100176545388,
+      "mae": 4.64292550157703,
+      "r2": 0.925217290600381,
+      "mape": 18.18466288354735
+    },
+    "cooked_fat_g": {
+      "rmse": 11.232429825852728,
+      "mae": 4.817945552589291,
+      "r2": 0.9298521920745321,
+      "mape": 27.786163994523243
+    },
+    "cooked_carbohydrate_g": {
+      "rmse": 6.353033994037125,
+      "mae": 3.5823316811508934,
+      "r2": 0.9518124841314416,
+      "mape": 13.849013812478264
+    },
+    "cooked_sodium_mg": {
+      "rmse": 378.3328135688627,
+      "mae": 232.32720205823156,
+      "r2": 0.9429607517643608,
+      "mape": 27.260066599776263
+    },
+    "cooked_cholesterol_mg": {
+      "rmse": 171.4339805195299,
+      "mae": 63.423811718768675,
+      "r2": 0.9071833184884355,
+      "mape": 33.71349065002225
+    },
+    "cooked_vitamin_c_mg": {
+      "rmse": 21.756160715921077,
+      "mae": 10.940996861670099,
+      "r2": 0.8897593910261883,
+      "mape": 35.74329480404651
+    },
+    "cooked_calcium_mg": {
+      "rmse": 48.46333604371265,
+      "mae": 23.89532846731296,
+      "r2": 0.9169773987413455,
+      "mape": 19.80673068556548
+    },
+    "cooked_iron_mg": {
+      "rmse": 1.106570571195911,
+      "mae": 0.6330731752397006,
+      "r2": 0.937624245558233,
+      "mape": 12.823182287442126
+    },
+    "cooked_potassium_mg": {
+      "rmse": 83.08918482646014,
+      "mae": 51.60911758673922,
+      "r2": 0.9788328716860011,
+      "mape": 7.285715204768624
+    }
+  }
+}

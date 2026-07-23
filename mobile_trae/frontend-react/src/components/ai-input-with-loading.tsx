@@ -1,5 +1,5 @@
-import { CornerRightUp, Paperclip, X, FileText, Image as ImageIcon } from "lucide-react"
-import { useRef, useState } from "react"
+import { CornerRightUp, Paperclip, X, Image as ImageIcon, Camera, Images } from "lucide-react"
+import { useRef, useState, useEffect } from "react"
 import { motion } from "framer-motion"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
@@ -37,7 +37,22 @@ export function AIInputWithLoading({
 }: AIInputWithLoadingProps) {
   const [inputValue, setInputValue] = useState("")
   const [submitted, setSubmitted] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [showPhotoMenu, setShowPhotoMenu] = useState(false)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const galleryInputRef = useRef<HTMLInputElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    if (!showPhotoMenu) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowPhotoMenu(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [showPhotoMenu])
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight,
@@ -74,15 +89,13 @@ export function AIInputWithLoading({
     e.target.value = ""
   }
 
-  const isImage = attachedFile?.type.startsWith("image/")
-
   return (
     <div className={cn("w-full", className)}>
       {/* 附件预览条 */}
       {attachedFile && (
         <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-[#667eea]/30 bg-[#667eea]/5 px-2.5 py-1.5">
           <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md bg-[#667eea]/10">
-            {isImage ? <ImageIcon className="h-3.5 w-3.5 text-[#667eea]" /> : <FileText className="h-3.5 w-3.5 text-[#667eea]" />}
+            <ImageIcon className="h-3.5 w-3.5 text-[#667eea]" />
           </div>
           <span className="flex-1 truncate text-[11px] lg:text-xs text-gray-600 font-medium">{attachedFile.name}</span>
           {uploading ? (
@@ -125,25 +138,42 @@ export function AIInputWithLoading({
           }}
           disabled={submitted || externalLoading}
         />
-        {/* 文件上传按钮 */}
+        {/* 图片上传按钮 → 弹出拍照/相册选择 */}
         {onFileSelect && (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={submitted || externalLoading || uploading}
-            className="absolute left-2 bottom-2 lg:left-2.5 lg:bottom-3 flex h-7 w-7 lg:h-8 lg:w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-[#667eea]/10 hover:text-[#667eea] transition-colors disabled:opacity-40"
-            title="上传文件"
-          >
-            <Paperclip className="h-4 w-4 lg:h-4.5 lg:w-4.5" />
-          </button>
+          <div className="absolute left-2 bottom-2 lg:left-2.5 lg:bottom-3" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setShowPhotoMenu(!showPhotoMenu)}
+              disabled={submitted || externalLoading || uploading}
+              className="flex h-7 w-7 lg:h-8 lg:w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-[#667eea]/10 hover:text-[#667eea] transition-colors disabled:opacity-40"
+              title="上传图片"
+            >
+              <Paperclip className="h-4 w-4 lg:h-4.5 lg:w-4.5" />
+            </button>
+            {showPhotoMenu && (
+              <div className="absolute bottom-full left-0 mb-1 w-28 rounded-xl border border-[#c8c3eb] bg-white shadow-lg py-1 z-50">
+                <button
+                  type="button"
+                  onClick={() => { setShowPhotoMenu(false); cameraInputRef.current?.click() }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-[#667eea]/10 transition-colors"
+                >
+                  <Camera className="h-3.5 w-3.5 text-[#667eea]" /> 拍照
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowPhotoMenu(false); galleryInputRef.current?.click() }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-xs text-gray-700 hover:bg-[#667eea]/10 transition-colors"
+                >
+                  <Images className="h-3.5 w-3.5 text-[#667eea]" /> 相册
+                </button>
+              </div>
+            )}
+          </div>
         )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          accept="image/png,image/jpeg,image/jpg,image/gif,image/webp,text/plain,text/markdown,text/csv,application/json,.txt,.md,.csv,.json,.html,.htm,.log"
-          onChange={handleFileChange}
-        />
+        {/* 拍照 → capture 调用系统相机 */}
+        <input ref={cameraInputRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileChange} />
+        {/* 相册 → 选择已有照片 */}
+        <input ref={galleryInputRef} type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
         {/* 发送按钮：灰色圆 → 紫色方块旋转 → 灰色圆 */}
         <motion.button
           onClick={handleSubmit}

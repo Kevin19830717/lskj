@@ -362,56 +362,30 @@ export default function AIChatPage() {
     if ((!rawContent && !attachedFile) || loading) return
 
     const file = attachedFile
-    const isImage = file?.type.startsWith("image/")
-
-    // 图片：上传到服务器获取URL(跨端显示) + 转base64(发给AI)
-    // 文本文件：先上传解析为文本，再拼接到消息中
-    let fileText = ""
+    // 只支持图片上传：拍照/相册
     let imageUrls: string[] = []  // 服务器URL（用于展示和历史记录）
     let aiImages: string[] = []   // base64 data URL（仅用于当前AI请求）
     if (file) {
-      if (isImage) {
-        setUploading(true)
-        try {
-          // 1. 上传到服务器获取URL（持久化，跨端可访问）
-          const uploadRes = await apiUpload<{ url?: string }>("/ai/chat/upload-image", file, "file")
-          if (uploadRes.code === 0 && uploadRes.data?.url) {
-            imageUrls.push(uploadRes.data.url)
-          }
-          // 2. 转 base64 给AI（当前请求用，不持久化）
-          aiImages = [await readFileAsDataURL(file)]
-        } catch {
-          fileText = `\n\n[图片上传失败: ${file.name}]`
-        } finally {
-          setUploading(false)
-          setAttachedFile(null)
+      setUploading(true)
+      try {
+        // 1. 上传到服务器获取URL（持久化，跨端可访问）
+        const uploadRes = await apiUpload<{ url?: string }>("/ai/chat/upload-image", file, "file")
+        if (uploadRes.code === 0 && uploadRes.data?.url) {
+          imageUrls.push(uploadRes.data.url)
         }
-      } else {
-        // 文本文件走解析接口
-        setUploading(true)
-        try {
-          const res = await apiUpload<{ text?: string; file_name?: string; file_type?: string }>(
-            "/ai/chat/upload-file",
-            file,
-            "file"
-          )
-          if (res.code === 0 && res.data?.text) {
-            fileText = `\n\n[附件: ${res.data.file_name || file.name}]\n${res.data.text}`
-          } else {
-            fileText = `\n\n[附件解析失败: ${file.name}]`
-          }
-        } catch {
-          fileText = `\n\n[附件上传失败: ${file.name}]`
-        } finally {
-          setUploading(false)
-          setAttachedFile(null)
-        }
+        // 2. 转 base64 给AI（当前请求用，不持久化）
+        aiImages = [await readFileAsDataURL(file)]
+      } catch {
+        // 图片上传失败
+      } finally {
+        setUploading(false)
+        setAttachedFile(null)
       }
     }
 
-    // 消息内容 = 用户文本 + 文本附件 + [IMG:url] 标记（标记会存入数据库，跨端可解析）
+    // 消息内容 = 用户文本 + [IMG:url] 标记
     const imgMarkers = imageUrls.map(url => `[IMG:${url}]`).join("")
-    const content = (rawContent + fileText + (imgMarkers ? `\n${imgMarkers}` : "")).trim()
+    const content = (rawContent + (imgMarkers ? `\n${imgMarkers}` : "")).trim()
     if (!content && aiImages.length === 0) return
 
     // 用户气泡：文本 + 图片URL列表（图片在气泡内展示）
