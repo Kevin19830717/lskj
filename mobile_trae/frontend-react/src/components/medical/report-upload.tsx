@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useRef, useState, type ReactNode } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { UploadCloud, FileText, RefreshCw, Activity, AlertCircle } from "lucide-react"
 import { WaveLoader } from "@/components/wave-loader"
@@ -12,10 +12,12 @@ interface ReportUploadProps {
   onParse: (file: File) => void
   /** 重新上传 */
   onReset: () => void
+  /** 替换默认的「AI 就绪，等待报告」占位（如历史报告卡片） */
+  footer?: ReactNode
 }
 
 /** 体检报告上传区：拖拽/点选 -> 预览 -> 解析（ECG 心电动画） */
-export function ReportUpload({ parsing, error, onParse, onReset }: ReportUploadProps) {
+export function ReportUpload({ parsing, error, onParse, onReset, footer }: ReportUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -182,9 +184,11 @@ export function ReportUpload({ parsing, error, onParse, onReset }: ReportUploadP
       )}
 
       {parsing === false && !file && (
-        <div className="flex justify-center">
-          <WaveLoader bars={5} message="AI 就绪，等待报告" />
-        </div>
+        footer ?? (
+          <div className="flex justify-center">
+            <WaveLoader bars={5} message="AI 就绪，等待报告" />
+          </div>
+        )
       )}
     </div>
   )

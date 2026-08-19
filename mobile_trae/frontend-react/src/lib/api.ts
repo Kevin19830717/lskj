@@ -389,30 +389,120 @@ export async function predictNutrients(ingredients: string[], weights: number[],
 }
 
 // ============================================================
-// 体检报告解读
+// 体检报告解读（持久化存储 + 综合分析）
 // ============================================================
 
-/** 后端多模态解析返回的原始报告 */
-export interface RawMedicalReportData {
-  report_date?: string
-  indicators?: { name?: string; value?: string | number; unit?: string; normal_range?: string; status?: string }[]
+/** 后端多模态解析返回的原始指标 */
+export interface RawMedicalIndicator {
+  name?: string
+  value?: string | number
+  unit?: string
+  normal_range?: string
+  status?: string
+}
+
+/** AI 综合分析结果（体检指标 + 餐食记录 + 营养报告联动） */
+export interface MedicalAiSummary {
+  overall?: string
+  abnormal_analysis?: { indicator?: string; finding?: string; diet_link?: string }[]
+  diet_intervention?: string[]
+  medical_advice?: string
+  nutrition_connection?: string
   summary_text?: string
 }
 
+/** 体检报告完整记录（medical_reports 表） */
+export interface MedicalReportRecord {
+  id: number
+  user_id?: number
+  report_date?: string | null
+  indicators?: RawMedicalIndicator[]
+  ai_summary?: MedicalAiSummary
+  quick_stats?: MedicalQuickStats
+  model_used?: string
+  created_at?: string
+}
+
+/** 列表项（轻量，用于预览卡片） */
+export interface MedicalReportListItem {
+  id: number
+  report_date?: string | null
+  created_at?: string
+  quick_stats?: MedicalQuickStats
+  overall?: string | null
+  indicator_count?: number
+}
+
+/** 规则引擎统计摘要（前端算好后回写后端） */
+export interface MedicalQuickStats {
+  total?: number
+  abnormal?: number
+  significant?: number
+  risk_levels?: { name: string; score: number; level: string }[]
+  [k: string]: unknown
+}
+
+/** 当前登录用户 id（登录后存于 localStorage.user） */
+export function getCurrentUserId(): number {
+  try {
+    const u = JSON.parse(localStorage.getItem("user") || "{}")
+    return typeof u?.id === "number" ? u.id : 20
+  } catch {
+    return 20
+  }
+}
+
 /**
- * 体检报告照片 -> 指标结构化（qwen 多模态 OCR）
- * POST {RAG}/parse-medical-report，返回 {code:0, data:{parsed_data, model_used,...}}
+ * 上传体检报告照片 -> OCR + 关联餐食/营养数据综合分析 -> 持久化存储
+ * POST {RAG}/medical-report/analyze (multipart: file, user_id)
  */
-export async function parseMedicalReport(file: File): Promise<RawMedicalReportData> {
+export async function analyzeMedicalReport(file: File): Promise<MedicalReportRecord> {
   const fd = new FormData()
   fd.append("file", file)
-  const resp = await fetch(`${RAG_BASE}/parse-medical-report`, { method: "POST", body: fd })
-  if (!resp.ok) throw new Error(`体检报告解析失败: HTTP ${resp.status}`)
-  const json = await resp.json().catch(() => null)
-  if (!json || json.code !== 0) throw new Error(json?.message || "体检报告解析失败")
-  const data = json.data?.parsed_data
-  if (!data || !Array.isArray(data.indicators) || data.indicators.length === 0) {
-    throw new Error("未能从报告中识别出指标，请换一张更清晰的照片")
+  fd.append("user_id", String(getCurrentUserId()))
+  const resp = await fetch(`${RAG_BASE}/medical-report/analyze`, { method: "POST", body: fd })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => null)
+    throw new Error(err?.detail || `体检报告分析失败: HTTP ${resp.status}`)
   }
-  return data as RawMedicalReportData
+  const json = await resp.json().catch(() => null)
+  if (!json || json.code !== 0) throw new Error(json?.message || "体检报告分析失败")
+  return json.data as MedicalReportRecord
+}
+
+/** 历史体检报告列表（预览卡片数据） GET {RAG}/medical-report/list */
+export async function getMedicalReportList(limit = 20): Promise<MedicalReportListItem[]> {
+  const resp = await fetch(`${RAG_BASE}/medical-report/list?user_id=${getCurrentUserId()}&limit=${limit}`)
+  if (!resp.ok) throw new Error(`获取历史报告失败: HTTP ${resp.status}`)
+  const json = await resp.json().catch(() => null)
+  if (!json || json.code !== 0) throw new Error(json?.message || "获取历史报告失败")
+  return (json.data?.items || []) as MedicalReportListItem[]
+}
+
+/** 体检报告详情 GET {RAG}/medical-report/{id} */
+export async function getMedicalReportDetail(id: number): Promise<MedicalReportRecord> {
+  const resp = await fetch(`${RAG_BASE}/medical-report/${id}`)
+  if (!resp.ok) throw new Error(`获取报告详情失败: HTTP ${resp.status}`)
+  const json = await resp.json().catch(() => null)
+  if (!json || json.code !== 0) throw new Error(json?.message || "获取报告详情失败")
+  return json.data as MedicalReportRecord
+}
+
+/** 回写前端规则引擎计算的风险统计（供列表卡片精确展示） */
+export async function updateMedicalQuickStats(id: number, quick_stats: MedicalQuickStats): Promise<void> {
+  try {
+    await fetch(`${RAG_BASE}/medical-report/${id}/quick-stats`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quick_stats }),
+    })
+  } catch {
+    /* 回写失败不影响本地展示 */
+  }
+}
+
+/** 删除历史体检报告 */
+export async function deleteMedicalReport(id: number): Promise<void> {
+  const resp = await fetch(`${RAG_BASE}/medical-report/${id}`, { method: "DELETE" })
+  if (!resp.ok) throw new Error(`删除失败: HTTP ${resp.status}`)
 }

@@ -115,6 +115,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ==================== 注册路由 ====================
 
 app.include_router(rag_router, prefix="/api/v1/rag", tags=["RAG"])
+# 同时挂载到根路径：开发环境 vite 把 /rag/xxx 重写为 /xxx 转发过来（生产 nginx 走 /api/v1/rag 不受影响）
+app.include_router(rag_router, tags=["RAG-Root"])
 
 
 # ==================== 营养预测接口（直挂 app，nginx /rag/ 代理可用） ====================

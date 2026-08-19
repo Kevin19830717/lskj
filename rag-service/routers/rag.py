@@ -4,10 +4,11 @@ RAG API 路由
 """
 import json
 import logging
-from typing import List
+import re
+from typing import List, Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from pydantic import BaseModel
 
 from database.connection import get_connection
@@ -265,6 +266,355 @@ async def parse_medical_report(file: UploadFile = File(...)):
         
     except Exception as e:
         logger.error(f"Medical report parsing failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 体检报告持久化存储 + 综合分析 ====================
+
+def _extract_json_block(text: str) -> Optional[dict]:
+    """从 LLM 返回文本中鲁棒地提取 JSON 对象（容忍 ```json 围栏和前后噪声）"""
+    if not text:
+        return None
+    cleaned = re.sub(r"```(?:json)?", "", text).strip()
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        return json.loads(cleaned[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+def _parse_range_for_stats(normal_range: str):
+    """解析参考范围字符串为 (low, high)，供服务端快速异常统计"""
+    if not normal_range:
+        return None, None
+    s = str(normal_range).strip().replace("～", "-").replace("~", "-")
+    m = re.match(r"^<?\s*([\d.]+)\s*-?\s*>?\s*([\d.]*)$", s)
+    if not m:
+        return None, None
+    low_s, high_s = m.group(1), m.group(2)
+    try:
+        low = float(low_s) if low_s else None
+    except ValueError:
+        low = None
+    try:
+        high = float(high_s) if high_s else (low if s.startswith("<") or "<" in s[:2] else None)
+    except ValueError:
+        high = None
+    if s.startswith("<") and high is None:
+        high = low
+        low = None
+    if s.startswith(">"):
+        low = low if low is not None else high
+        high = None
+    return low, high
+
+
+def _compute_quick_stats(indicators: list) -> dict:
+    """服务端兜底统计（前端规则引擎随后会用 PUT quick-stats 覆盖为精确值）"""
+    total = len(indicators)
+    abnormal = significant = 0
+    for it in indicators:
+        try:
+            val = float(str(it.get("value", "")).replace(",", ""))
+        except (ValueError, TypeError):
+            continue
+        low, high = _parse_range_for_stats(it.get("normal_range", ""))
+        if high is not None and val > high:
+            abnormal += 1
+            if high > 0 and val > high * 1.15:
+                significant += 1
+        elif low is not None and val < low:
+            abnormal += 1
+    return {"total": total, "abnormal": abnormal, "significant": significant, "risk_levels": []}
+
+
+async def _gather_medical_context(user_id: int) -> str:
+    """
+    构建体检综合分析上下文：用户档案 + 近14天餐食营养 + 营养报告摘要
+    与 _build_user_context 不同：本函数面向体检解读，聚合维度更全（钠/胆固醇/钙铁钾等）
+    """
+    parts = []
+    try:
+        async with get_connection() as conn:
+            # 用户画像
+            profile = await conn.fetchrow(
+                """SELECT p.gender, p.age, p.height_cm, p.weight_kg, p.health_goal, p.allergies
+                   FROM user_profiles p WHERE p.user_id = $1""", user_id)
+            if profile:
+                gender_map = {"male": "男", "female": "女"}
+                goal_map = {"lose_weight": "减脂", "gain_weight": "增重", "maintain": "维持",
+                            "muscle_gain": "增肌", "health_maintenance": "健康管理"}
+                parts.append(f"【用户档案】{profile['age'] or '?'}岁{gender_map.get(profile['gender'], '?')}，"
+                             f"身高{profile['height_cm'] or '?'}cm，体重{profile['weight_kg'] or '?'}kg，"
+                             f"健康目标：{goal_map.get(profile['health_goal'], '未设定')}。")
+
+            # 近14天餐食营养汇总（日均）
+            rows = await conn.fetch(
+                """SELECT ingredients, cooked_energy_kcal, cooked_protein_g, cooked_fat_g,
+                          cooked_carbohydrate_g, cooked_sodium_mg, cooked_cholesterol_mg,
+                          cooked_calcium_mg, cooked_iron_mg, cooked_potassium_mg, created_at
+                   FROM weigh_records
+                   WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '14 days'
+                   ORDER BY created_at DESC LIMIT 60""",
+                user_id,
+            )
+            if rows:
+                n = len(rows)
+                s = lambda col: sum((r[col] or 0) for r in rows)
+                days = max(1, (rows[0]["created_at"] - rows[-1]["created_at"]).days + 1)
+                parts.append(
+                    f"【近14天餐食记录】共{n}条记录（约{days}天）："
+                    f"日均热量{s('cooked_energy_kcal')/days:.0f}kcal，"
+                    f"蛋白质{s('cooked_protein_g')/days:.1f}g/天，脂肪{s('cooked_fat_g')/days:.1f}g/天，"
+                    f"碳水{s('cooked_carbohydrate_g')/days:.1f}g/天，"
+                    f"钠{s('cooked_sodium_mg')/days:.0f}mg/天，胆固醇{s('cooked_cholesterol_mg')/days:.0f}mg/天，"
+                    f"钙{s('cooked_calcium_mg')/days:.0f}mg/天，铁{s('cooked_iron_mg')/days:.1f}mg/天，"
+                    f"钾{s('cooked_potassium_mg')/days:.0f}mg/天。"
+                )
+                from collections import Counter
+                food_cnt = Counter()
+                for r in rows:
+                    ings = r["ingredients"]
+                    if isinstance(ings, str):
+                        try:
+                            ings = json.loads(ings)
+                        except Exception:
+                            ings = []
+                    for ing in (ings or []):
+                        if isinstance(ing, str) and len(ing) > 1:
+                            food_cnt[ing] += 1
+                if food_cnt:
+                    top = "、".join(f"{k}({v}次)" for k, v in food_cnt.most_common(8))
+                    parts.append(f"【高频食材】{top}。")
+            else:
+                parts.append("【近14天餐食记录】暂无数据。")
+
+            # 营养报告摘要（最近1份周报 + 最近1份月报 + 最近3份日报）
+            summaries = await conn.fetch(
+                """SELECT summary_type, summary_date, insights FROM user_analysis_summaries
+                   WHERE user_id = $1 AND summary_type IN ('daily', 'weekly', 'monthly')
+                   ORDER BY summary_date DESC LIMIT 30""",
+                user_id,
+            )
+            picked, seen = [], {"daily": 0, "weekly": 0, "monthly": 0}
+            for r in summaries:
+                t = r["summary_type"]
+                if t == "daily" and seen[t] < 3:
+                    picked.append(r); seen[t] += 1
+                elif t in ("weekly", "monthly") and seen[t] < 1:
+                    picked.append(r); seen[t] += 1
+            if picked:
+                type_name = {"daily": "日报", "weekly": "周报", "monthly": "月报"}
+                blocks = [f"【营养报告·{type_name[r['summary_type']]} {r['summary_date']}】{json.dumps(r['insights'], ensure_ascii=False)[:600]}"
+                          for r in picked]
+                parts.append("\n".join(blocks))
+            else:
+                parts.append("【营养报告】暂无数据。")
+    except Exception as e:
+        logger.warning(f"Failed to gather medical context for user={user_id}: {e}")
+
+    return "\n".join(parts) if parts else "暂无用户健康数据。"
+
+
+async def _ocr_medical_report(file: UploadFile) -> dict:
+    """多模态 OCR：体检报告图片 -> 结构化指标 dict"""
+    from prompts.system_prompt import get_system_prompt_for_medical_parser
+    import base64
+
+    contents = await file.read()
+    image_base64 = base64.b64encode(contents).decode("utf-8")
+    content_type = file.content_type or "image/jpeg"
+    messages = [{
+        "role": "user",
+        "content": [
+            {"image": f"data:{content_type};base64,{image_base64}"},
+            {"text": get_system_prompt_for_medical_parser()},
+        ],
+    }]
+    result = await generate_multimodal(messages=messages, max_tokens=2048)
+    parsed = _extract_json_block(result.get("content", ""))
+    if not parsed or not isinstance(parsed.get("indicators"), list) or not parsed["indicators"]:
+        raise HTTPException(status_code=422, detail="未能从报告中识别出指标，请换一张更清晰的照片")
+    return parsed
+
+
+@router.post("/medical-report/analyze", summary="体检报告综合分析并持久化存储")
+async def analyze_medical_report(
+    file: UploadFile = File(...),
+    user_id: int = Form(...),
+):
+    """
+    完整流水线：OCR 解析体检报告 -> 关联用户餐食记录/营养报告/健康档案 ->
+    大模型综合分析 -> 存入 medical_reports 表 -> 返回完整记录
+    """
+    from services.generation_service import generate_text
+    from prompts.system_prompt import get_system_prompt_for_medical_comprehensive
+    from datetime import datetime
+
+    try:
+        # 1. OCR 解析
+        parsed = await _ocr_medical_report(file)
+        indicators = parsed.get("indicators", [])
+
+        # 2. 用户健康上下文（档案 + 餐食 + 营养报告）
+        context = await _gather_medical_context(user_id)
+
+        # 3. 构建分析输入
+        ind_lines = []
+        for it in indicators:
+            ind_lines.append(
+                f"- {it.get('name', '?')}：{it.get('value', '?')}{it.get('unit') or ''} "
+                f"（参考范围 {it.get('normal_range') or '未提供'}，状态 {it.get('status') or '未知'}）"
+            )
+        report_date = parsed.get("report_date") or datetime.now().strftime("%Y-%m-%d")
+        user_prompt = (
+            f"体检日期：{report_date}\n\n【体检指标】\n" + "\n".join(ind_lines)
+            + f"\n\nOCR 摘要：{parsed.get('summary_text', '无')}\n\n{context}"
+        )
+
+        # 4. 大模型综合分析（失败不阻断存储，ai_summary 置空由前端兜底）
+        ai_summary = {}
+        model_used = ""
+        try:
+            result = await generate_text(
+                system_prompt=get_system_prompt_for_medical_comprehensive(),
+                user_prompt=user_prompt,
+                temperature=0.4,
+                max_tokens=2048,
+            )
+            model_used = result.get("model_used", "")
+            ai_summary = _extract_json_block(result.get("content", "")) or {}
+        except Exception as llm_err:
+            logger.warning(f"Medical comprehensive analysis LLM failed: {llm_err}")
+
+        # 5. 服务端兜底统计 + 入库
+        quick_stats = _compute_quick_stats(indicators)
+        parsed_date = None
+        try:
+            parsed_date = datetime.strptime(str(report_date)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            parsed_date = datetime.now().date()
+
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO medical_reports
+                   (user_id, report_date, indicators, ai_summary, quick_stats, model_used)
+                   VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6)
+                   RETURNING id, user_id, report_date, indicators, ai_summary, quick_stats,
+                             model_used, created_at""",
+                user_id, parsed_date,
+                json.dumps(indicators, ensure_ascii=False),
+                json.dumps(ai_summary, ensure_ascii=False),
+                json.dumps(quick_stats, ensure_ascii=False),
+                model_used,
+            )
+
+        record = _row_to_record(row)
+        return {"code": 0, "message": "success", "data": record}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Medical report analyze failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _row_to_record(row) -> dict:
+    rec = dict(row)
+    # asyncpg 默认把 jsonb 列返回为 JSON 字符串，这里统一解析为对象
+    for col in ("indicators", "ai_summary", "quick_stats"):
+        if isinstance(rec.get(col), str):
+            try:
+                rec[col] = json.loads(rec[col])
+            except json.JSONDecodeError:
+                rec[col] = {} if col != "indicators" else []
+    rec["report_date"] = rec["report_date"].isoformat() if rec["report_date"] else None
+    rec["created_at"] = rec["created_at"].isoformat()
+    return rec
+
+
+@router.get("/medical-report/list", summary="体检报告历史列表")
+async def list_medical_reports(
+    user_id: int = Query(...),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """返回用户的体检报告历史（按创建时间倒序），轻量字段用于预览卡片"""
+    try:
+        async with get_connection() as conn:
+            rows = await conn.fetch(
+                """SELECT id, report_date, quick_stats, created_at,
+                          ai_summary->>'overall' AS overall,
+                          jsonb_array_length(indicators) AS indicator_count
+                   FROM medical_reports WHERE user_id = $1
+                   ORDER BY created_at DESC LIMIT $2""",
+                user_id, limit,
+            )
+        return {"code": 0, "message": "success",
+                "data": {"items": [_row_to_record(r) for r in rows]}}
+    except Exception as e:
+        logger.error(f"List medical reports failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/medical-report/{record_id}", summary="体检报告详情")
+async def get_medical_report(record_id: int):
+    try:
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """SELECT id, user_id, report_date, indicators, ai_summary, quick_stats,
+                          model_used, created_at
+                   FROM medical_reports WHERE id = $1""",
+                record_id,
+            )
+        if not row:
+            raise HTTPException(status_code=404, detail="报告不存在")
+        return {"code": 0, "message": "success", "data": _row_to_record(row)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get medical report failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class QuickStatsUpdate(BaseModel):
+    quick_stats: dict
+
+
+@router.put("/medical-report/{record_id}/quick-stats", summary="回写前端规则引擎计算结果")
+async def update_quick_stats(record_id: int, req: QuickStatsUpdate):
+    """前端规则引擎（风险评分等）计算完详情后回写，供列表卡片精确展示"""
+    try:
+        async with get_connection() as conn:
+            row = await conn.fetchrow(
+                """UPDATE medical_reports SET quick_stats = $1::jsonb, updated_at = now()
+                   WHERE id = $2 RETURNING id""",
+                json.dumps(req.quick_stats, ensure_ascii=False), record_id,
+            )
+        if not row:
+            raise HTTPException(status_code=404, detail="报告不存在")
+        return {"code": 0, "message": "success", "data": {"id": record_id}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update quick stats failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/medical-report/{record_id}", summary="删除体检报告")
+async def delete_medical_report(record_id: int):
+    try:
+        async with get_connection() as conn:
+            row = await conn.fetchval(
+                "DELETE FROM medical_reports WHERE id = $1 RETURNING id", record_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="报告不存在")
+        return {"code": 0, "message": "success", "data": {"id": record_id}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete medical report failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
