@@ -28,7 +28,7 @@ async def create_embeddings_table(conn):
         CREATE TABLE IF NOT EXISTS user_health_embeddings (
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
-            embedding VECTOR(1536) NOT NULL,
+            embedding VECTOR(1024) NOT NULL,
             source_text TEXT NOT NULL,
             source_type VARCHAR(50) DEFAULT 'diet_summary',
             source_date DATE,

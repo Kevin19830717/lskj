@@ -15,10 +15,10 @@ class Settings(BaseSettings):
 
     # DashScope API (OpenAI 兼容模式)
     DASHSCOPE_API_KEY: str = ""
-    TEXT_MODEL: str = "qwen3.7-plus"
-    VL_MODEL: str = "qwen-vl-flash"
-    OMNI_MODEL: str = "qwen3-omni-flash"  # 多模态思考模型（支持文本+图片+enable_thinking）
-    EMBEDDING_MODEL: str = "text-embedding-v2"
+    TEXT_MODEL: str = "qwen3.7-flash-2026-07-15"
+    VL_MODEL: str = "qwen3.7-flash-2026-07-15"
+    OMNI_MODEL: str = "qwen3.7-flash-2026-07-15"  # 统一使用 qwen3.7-flash-2026-07-15
+    EMBEDDING_MODEL: str = "qwen3.7-text-embedding"
 
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
@@ -41,11 +41,6 @@ class Settings(BaseSettings):
     @property
     def embeddings_url(self) -> str:
         return f"{self.DASHSCOPE_BASE_URL}/embeddings"
-
-    @property
-    def multimodal_url(self) -> str:
-        """多模态仍用旧版 API"""
-        return "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 
 
 @lru_cache()

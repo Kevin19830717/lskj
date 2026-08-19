@@ -1115,7 +1115,7 @@ func (s *SummaryService) generateAISummaryForReport(ctx context.Context, userID 
 	client := dashscope.NewClient(s.cfg.Aliyun.APIKey)
 	model := s.cfg.Aliyun.TextModel
 	if model == "" {
-		model = "qwen-plus"
+		model = "qwen3.7-flash-2026-07-15"
 	}
 
 	resp, err := client.Responses(&dashscope.ResponsesRequest{

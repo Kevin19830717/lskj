@@ -29,6 +29,7 @@ type WeighInRequest struct {
 	Ingredients       []string  `json:"ingredients" binding:"required,min=1"`        // 食材名称列表(英文标识)
 	RawWeightsG       []float64 `json:"raw_weights_g" binding:"required,min=1"`      // 对应原始重量(克)
 	CookingMethod     string    `json:"cooking_method,omitempty"`                     // 烹饪方式
+	RecordMode        string    `json:"record_mode,omitempty"`                        // raw=生食材, cooked=成品菜（拍照识别传cooked）
 	CookedWeightG     float64   `json:"cooked_weight_g"`                              // 烹饪后重量(g) — 嵌入式端计算
 	CookedEnergyKcal  float64   `json:"cooked_energy_kcal"`                           // 热量(kcal)
 	CookedProteinG    float64   `json:"cooked_protein_g"`                             // 蛋白质(g)

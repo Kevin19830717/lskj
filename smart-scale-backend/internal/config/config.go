@@ -67,10 +67,11 @@ type JWTConfig struct {
 
 // AliyunConfig 阿里云DashScope配置
 type AliyunConfig struct {
-	APIKey         string `mapstructure:"api_key"`
-	TextModel      string `mapstructure:"text_model"`
-	VLModel        string `mapstructure:"vl_model"`
-	EmbeddingModel string `mapstructure:"embedding_model"`
+	APIKey             string `mapstructure:"api_key"`
+	TextModel          string `mapstructure:"text_model"`
+	VLModel            string `mapstructure:"vl_model"`
+	EmbeddingModel     string `mapstructure:"embedding_model"`
+	EmbeddingDimension int    `mapstructure:"embedding_dimension"` // 向量维度（v2=1536, qwen3.7=1024）
 }
 
 // UploadConfig 文件上传配置
@@ -125,6 +126,10 @@ func Load(configPath string) (*Config, error) {
 		}
 		if db := os.Getenv("DATABASE_DBNAME"); db != "" {
 			cfg.Database.DBName = db
+		}
+		// 阿里云 API Key 环境变量覆盖
+		if ak := os.Getenv("DASHSCOPE_API_KEY"); ak != "" {
+			cfg.Aliyun.APIKey = ak
 		}
 	})
 

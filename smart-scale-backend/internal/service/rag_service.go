@@ -43,7 +43,7 @@ func NewRAGService(
 }
 
 // GenerateAdvice 生成AI健康建议（RAG流程）
-// 流程：1)获取最近摘要 -> 2)向量化查询文本 -> 3)检索Top5相似历史 -> 4)构建prompt -> 5)调qwen-plus生成
+// 流程：1)获取最近摘要 -> 2)向量化查询文本 -> 3)检索Top5相似历史 -> 4)构建prompt -> 5)调qwen3.7-flash-2026-07-15生成
 func (s *RAGService) GenerateAdvice(ctx context.Context, userID int, adviceType string, weekDateStr string) (*model.HealthAdvice, error) {
 	// 1. 获取最近的摘要数据作为基础上下文
 	summaries, err := s.getRecentContext(ctx, userID)

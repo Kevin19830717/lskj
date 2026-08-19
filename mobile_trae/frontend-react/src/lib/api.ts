@@ -1,4 +1,16 @@
 const API_BASE = import.meta.env.VITE_API_BASE as string || "/api/v1"
+export { API_BASE }
+
+// RAG 服务基础地址：/rag/xxx 走 nginx 代理到 Python RAG 服务（8001）
+// 网页端相对路径可访问；APK 端需要用完整域名
+function resolveRagBase(): string {
+  if (API_BASE.startsWith("http://") || API_BASE.startsWith("https://")) {
+    const u = new URL(API_BASE)
+    return `${u.protocol}//${u.host}/rag`
+  }
+  return "/rag"
+}
+export const RAG_BASE = resolveRagBase()
 
 export interface ApiResponse<T = unknown> {
   code: number
@@ -280,4 +292,98 @@ export async function recordCookedWeighIn(body: CookedWeighInRequest) {
 /** 列出所有熟菜菜名（菜名下拉用） */
 export async function listDishes() {
   return apiGet<DishNutrition[]>("/dishes")
+}
+
+// ===== 添加餐食记录相关 =====
+
+/** 搜索食物库（手动录入模式用） */
+export async function searchFoods(query: string) {
+  return apiGet<FoodSearchResult>(`/foods/search?query=${encodeURIComponent(query)}`)
+}
+
+/** 图片识别结果中的单个食物 */
+export interface PhotoFoodItem {
+  name: string
+  count: number
+  weight_g: number
+}
+
+/** 图片识别返回的营养素 */
+export interface PhotoNutrients {
+  energy_kcal: number
+  protein_g: number
+  fat_g: number
+  carbohydrate_g: number
+  sodium_mg: number
+  cholesterol_mg: number
+  vitamin_c_mg: number
+  calcium_mg: number
+  iron_mg: number
+  potassium_mg: number
+}
+
+/** 图片识别完整结果 */
+export interface PhotoRecognitionResult {
+  foods: PhotoFoodItem[]
+  total_weight_g: number
+  nutrients: PhotoNutrients
+  raw_text?: string
+}
+
+/** 拍照识别食物（上传图片→AI识别→返回食物+营养）
+ * @param file 图片文件
+ * @param mode "cooked"=成品菜识别, "ingredient"=生食材逐项识别（默认cooked）
+ */
+export async function recognizeFoodPhoto(file: File, mode: "cooked" | "ingredient" = "cooked") {
+  const formData = new FormData()
+  formData.append("file", file)
+  formData.append("mode", mode)
+  const token = localStorage.getItem("token")
+  const resp = await fetch(API_BASE + "/weigh-in/photo", {
+    method: "POST",
+    headers: token ? { Authorization: "Bearer " + token } : {},
+    body: formData,
+  })
+  const data = (await resp.json()) as ApiResponse<PhotoRecognitionResult>
+  if (resp.status === 401 || data.code === 401) {
+    localStorage.removeItem("token"); localStorage.removeItem("user")
+    if (typeof window !== "undefined" && window.location.pathname !== "/") window.location.href = "/"
+  }
+  return data
+}
+
+/** 手动录入称重记录请求 */
+export interface ManualWeighInRequest {
+  ingredients: string[]
+  raw_weights_g: number[]
+  cooking_method?: string
+  record_mode?: string          // "raw"=生食材, "cooked"=成品菜（拍照识别传cooked）
+  cooked_weight_g?: number
+  cooked_energy_kcal?: number
+  cooked_protein_g?: number
+  cooked_fat_g?: number
+  cooked_carbohydrate_g?: number
+  cooked_sodium_mg?: number
+  cooked_cholesterol_mg?: number
+  cooked_vitamin_c_mg?: number
+  cooked_calcium_mg?: number
+  cooked_iron_mg?: number
+  cooked_potassium_mg?: number
+  created_at?: string
+}
+
+/** 手动录入称重记录（写入数据库） */
+export async function recordWeighIn(body: ManualWeighInRequest) {
+  return apiPost<WeighRecord>("/weigh-in", body)
+}
+
+/** 模型预测营养素（LightGBM，走 RAG 服务） */
+export async function predictNutrients(ingredients: string[], weights: number[], cookingMethod: string) {
+  const resp = await fetch(`${RAG_BASE}/predict-nutrients`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ingredients, weights, cooking_method: cookingMethod }),
+  })
+  const data = await resp.json().catch(() => null)
+  return data
 }

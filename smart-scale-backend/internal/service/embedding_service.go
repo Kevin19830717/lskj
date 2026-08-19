@@ -24,7 +24,7 @@ func NewEmbeddingService(cfg *config.AliyunConfig) *EmbeddingService {
 
 // GenerateEmbedding 生成文本向量嵌入
 func (s *EmbeddingService) GenerateEmbedding(text string) ([]float64, error) {
-	resp, err := s.client.GenerateEmbedding([]string{text})
+	resp, err := s.client.GenerateEmbedding([]string{text}, s.cfg.EmbeddingModel)
 	if err != nil {
 		return nil, fmt.Errorf("embedding API call failed: %w", err)
 	}
@@ -47,7 +47,7 @@ func (s *EmbeddingService) BatchGenerateEmbedding(texts []string) ([][]float64, 
 			end = len(texts)
 		}
 		batch := texts[i:end]
-		resp, err := s.client.GenerateEmbedding(batch)
+		resp, err := s.client.GenerateEmbedding(batch, s.cfg.EmbeddingModel)
 		if err != nil {
 			logrus.WithError(err).Warnf("Batch embedding failed at batch starting index %d", i)
 			continue

@@ -155,7 +155,7 @@ class ParseMedicalReportResponse(BaseModel):
     indicators: List[MedicalIndicator] = Field(default_factory=list)
     summary_text: Optional[str] = None
     raw_json: Optional[Any] = None
-    model_used: str = "qwen-vl-flash"
+    model_used: str = "qwen3.7-flash-2026-07-15"
 
 
 # ==================== Health Check API ====================
@@ -190,5 +190,5 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """AI 对话响应体"""
     reply: str = Field(..., description="AI 回复内容")
-    model_used: str = "qwen-plus"
+    model_used: str = "qwen3.7-flash-2026-07-15"
     generated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -132,15 +132,15 @@ CREATE TABLE IF NOT EXISTS user_health_embeddings (
     source_type     VARCHAR(15)     NOT NULL CHECK (source_type IN ('daily_summary','weekly_summary','monthly_summary','yearly_summary','weigh_record','medical_report')),
     source_date     DATE            NOT NULL,
     content_text    TEXT            NOT NULL,
-    embedding       VECTOR(1536),
+    embedding       VECTOR(1024),
     metadata        JSONB           DEFAULT '{}',
     created_at      TIMESTAMPTZ     DEFAULT NOW()
 );
 
 -- IVFFlat 索引用于向量相似度搜索
-CREATE INDEX idx_embeddings_ivfflat ON user_health_embeddings USING ivfflat(embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_embeddings_ivfflat ON user_health_embeddings USING ivfflat(embedding vector_cosine_ops) WITH (lists = 100);
 -- 辅助索引
-CREATE INDEX idx_embeddings_user_date ON user_health_embeddings(user_id, source_date DESC);
+CREATE INDEX IF NOT EXISTS idx_embeddings_user_date ON user_health_embeddings(user_id, source_date DESC);
 
 -- ============================================================
 -- 自动更新 updated_at 触发器函数

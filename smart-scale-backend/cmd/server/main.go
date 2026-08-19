@@ -17,6 +17,7 @@ import (
 	"smart-scale-backend/internal/repository"
 	"smart-scale-backend/internal/service"
 	"smart-scale-backend/internal/cron"
+	"smart-scale-backend/pkg/dashscope"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -65,14 +66,16 @@ func main() {
 	mealSvc := service.NewMealService(mealRepo, foodRepo)
 	foodSvc := service.NewFoodService(foodRepo)
 	embedSvc := service.NewEmbeddingService(&cfg.Aliyun)
+	photoSvc := service.NewPhotoRecognitionService(&cfg.Aliyun)
 	summarSvc := service.NewSummaryService(mealRepo, summaryRepo, embedRepo, embedSvc, foodRepo, cfg)
-	ragSvc := service.NewRAGService(summaryRepo, adviceRepo, embedRepo, embedSvc, nil, cfg)
+	dashClient := dashscope.NewClient(cfg.Aliyun.APIKey)
+	ragSvc := service.NewRAGService(summaryRepo, adviceRepo, embedRepo, embedSvc, dashClient, cfg)
 	deviceSvc := service.NewDeviceService(deviceRepo)
 
 	// 7. 初始化 Handler 层
 	authHandler := handler.NewAuthHandler(authSvc)
 	userHandler := handler.NewUserHandler(userSvc, authSvc)
-	mealHandler := handler.NewMealHandler(mealSvc)
+	mealHandler := handler.NewMealHandler(mealSvc, photoSvc)
 	foodHandler := handler.NewFoodHandler(foodSvc)
 	summaryHandler := handler.NewSummaryHandler(summarSvc)
 	adviceHandler := handler.NewHealthAdviceHandler(ragSvc)
@@ -178,6 +181,8 @@ func setupRoutes(
 
 	// === 嵌入式设备数据上报（免认证，user_id 通过 query 传入，比赛演示用）===
 	api.POST("/weigh-in/record", mealH.RecordWeighInTest)
+	// 器件端正餐识别测试接口（免认证，device_id 指定用户）
+	api.POST("/weigh-in/cooked-recognition", mealH.DeviceCookedRecognition)
 
 	// === 后台管理（需 X-Admin-Key，在 handler 内校验）===
 	api.POST("/admin/devices", deviceH.Provision)      // 批量预登记设备
@@ -271,8 +276,9 @@ func setupRoutes(
 	deviceAPI := api.Group("/device")
 	deviceAPI.Use(middleware.DeviceAuth(deviceSvc))
 	{
-		deviceAPI.POST("/weigh-in", mealH.RecordWeighIn)
-	}
+	deviceAPI.POST("/weigh-in", mealH.RecordWeighIn)
+	deviceAPI.POST("/cooked-recognition", mealH.DeviceCookedRecognition)
+}
 
 	// === 受保护的API（需要JWT）===
 	protected := api.Group("")
@@ -296,6 +302,7 @@ func setupRoutes(
 	// 称重记录
 	protected.POST("/weigh-in", mealH.RecordWeighIn)
 	protected.POST("/weigh-in/cooked", mealH.RecordCookedWeighIn)
+	protected.POST("/weigh-in/photo", mealH.RecognizeFoodPhoto)
 	protected.GET("/dishes", mealH.ListDishes)
 	protected.GET("/records", mealH.GetHistoryRecords)
 	protected.PUT("/records/:id", mealH.UpdateWeighRecord)
@@ -344,6 +351,12 @@ func setupRoutes(
 			"service": "smart-scale-backend",
 			"version": "1.0.0",
 		})
+	})
+
+	// 功能开关：熟菜模式（创建 /tmp/cooked_dish_enabled 文件即启用，删掉即关闭）
+	r.GET("/api/v1/system/cooked-dish", func(c *gin.Context) {
+		_, err := os.Stat("/tmp/cooked_dish_enabled")
+		c.JSON(http.StatusOK, gin.H{"enabled": err == nil})
 	})
 
 	// 前端静态文件服务

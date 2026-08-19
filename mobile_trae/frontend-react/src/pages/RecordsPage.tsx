@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import type { DateRange } from "react-aria-components"
 import AppShell from "@/components/app-shell"
-import { apiGet, apiPut, apiDelete, apiDeleteWithBody, type PaginatedRecords, type WeighRecord } from "@/lib/api"
+import { apiGet, apiPut, apiDelete, apiDeleteWithBody, API_BASE, type PaginatedRecords, type WeighRecord } from "@/lib/api"
 import { Card, CardContent } from "@/components/ui/card"
 import { motion, AnimatePresence } from "framer-motion"
 import { JollyDateRangePicker } from "@/components/ui/date-range-picker"
-import { ClipboardList, CheckSquare, Square, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils, Pencil, Trash2 } from "lucide-react"
+import { ClipboardList, CheckSquare, Square, ChevronDown, ChevronLeft, ChevronRight, Search, Clock, Flame, Beef, Droplets, Wheat, Scale, ChefHat, Utensils, Pencil, Trash2, Plus } from "lucide-react"
 import { WaveLoader } from "@/components/wave-loader"
+import AddRecordModal from "@/components/add-record-modal"
 
 // ============================================================
 // 工具函数
@@ -196,7 +197,7 @@ function RecordDetail({ record }: { record: WeighRecord }) {
               ))}
             </div>
 
-            {/* 烹饪方式(仅食材模式) + 用餐时间 — 竖直居中 */}
+            {/* 烹饪方式 + 用餐时间 */}
             <div className={`pt-4 mt-5 border-t ${borderColor} flex flex-col items-center gap-2.5`}>
               {!isCooked && record.cooking_method && (
                 <div className="flex items-center justify-center gap-2 text-base">
@@ -204,6 +205,14 @@ function RecordDetail({ record }: { record: WeighRecord }) {
                     <ChefHat className={`h-4 w-4 ${accentText}`} /> 烹饪方式
                   </span>
                   <CookingTag method={record.cooking_method} label={methodLabel} />
+                </div>
+              )}
+              {isCooked && (
+                <div className="flex items-center justify-center gap-2 text-base">
+                  <span className="flex items-center gap-1.5 text-emerald-600 font-medium">
+                    <ChefHat className="h-4 w-4 text-emerald-600" /> 烹饪方式
+                  </span>
+                  <CookingTag method="cooked" label="菜品" />
                 </div>
               )}
               <div className="flex items-center justify-center gap-2 text-base">
@@ -261,6 +270,17 @@ function RecordDetail({ record }: { record: WeighRecord }) {
 // 主页面
 // ============================================================
 export default function RecordsPage() {
+  // 熟菜展示开关：后端控制的文件开关
+  const [showCooked, setShowCooked] = useState(false)
+  useEffect(() => {
+    fetch(`${API_BASE}/system/cooked-dish`)
+      .then(r => r.json())
+      .then(d => setShowCooked(d.enabled === true))
+      .catch(() => setShowCooked(false))
+  }, [])
+
+  // 添加餐食记录弹窗
+  const [showAddRecord, setShowAddRecord] = useState(false)
   const [dateRange, setDateRange] = useState<DateRange | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [records, setRecords] = useState<PaginatedRecords | null>(null)
@@ -443,7 +463,8 @@ export default function RecordsPage() {
   }
 
   return (
-    <AppShell title="称重历史记录" titleIcon={<ClipboardList className="w-6 h-6 text-[#667eea]" />}>
+    <AppShell title="称重历史记录" titleIcon={<ClipboardList className="w-6 h-6 text-[#667eea]" />}
+    >
       <style>{`
         .date-picker-purple [data-selected] { background-color: #667eea !important; color: #fff !important; }
         .date-picker-purple [data-focused] { background-color: #667eea !important; color: #fff !important; }
@@ -530,6 +551,12 @@ export default function RecordsPage() {
             </button>
           </>
         )}
+        {/* 添加餐食记录按钮 — 同行右对齐 */}
+        <button type="button"
+          onClick={() => setShowAddRecord(true)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-gradient-to-r from-[#667eea] to-[#764ba2] text-white px-2 lg:px-3 py-1.5 text-[10px] lg:text-xs shadow-sm hover:shadow-md transition-all">
+          <Plus className="h-3.5 w-3.5" /> 添加餐食记录
+        </button>
       </div>
 
       <Card className="border-0 bg-white lg:bg-white/85 shadow-none lg:shadow-[0_12px_40px_rgba(102,126,234,0.12)] py-0 lg:py-6 gap-0 lg:gap-6">
@@ -595,7 +622,7 @@ export default function RecordsPage() {
             <div className="w-6" />
             <div className="flex-1 flex items-center gap-4 min-w-0">
               <div className="w-[130px] text-center flex-shrink-0">时间</div>
-              <div className="w-[90px] text-center flex-shrink-0">模式</div>
+              {showCooked && <div className="w-[90px] text-center flex-shrink-0">模式</div>}
               <div className="flex-1 text-center">食材/菜名</div>
               <div className="w-[80px] text-center flex-shrink-0">烹饪方式</div>
             </div>
@@ -619,8 +646,7 @@ export default function RecordsPage() {
             )}
             {!loading && items.map((record, recordIdx) => {
               const isExpanded = expandedId === record.id
-              // 熟菜功能开关：URL 加 ?show=cooked 启用，不加则一切照旧
-              const showCooked = typeof window !== 'undefined' && window.location.search.includes('show=cooked')
+              // showCooked 已在组件顶部声明
               const isCooked = showCooked && record.record_mode === 'cooked'
               const names = isCooked
                 ? [record.ingredients?.[0] || '成品菜']
@@ -663,25 +689,20 @@ export default function RecordsPage() {
                       <span className="text-sm text-gray-700 whitespace-nowrap flex-shrink-0 w-[130px] text-center">
                         {formatDateTime(record.created_at)}
                       </span>
-                      {/* 模式标签 — 独立列，与表头"模式"对齐 */}
+                      {/* 模式标签 — 仅当 URL 含 ?show=cooked 才显示 */}
                       <span className="flex-shrink-0 w-[90px] flex justify-center">
-                        <RecordModeTag mode={record.record_mode || "raw"} size="md" />
+                        {showCooked && <RecordModeTag mode={record.record_mode || "raw"} size="md" />}
                       </span>
-                      {/* 食材/菜名 — 菜品模式用绿色，菜名后显示克重 */}
-                      <span className="text-sm font-semibold min-w-0 truncate flex-1 text-center flex items-center justify-center gap-1">
-                        <span className={`truncate ${isCooked ? 'text-emerald-700' : 'text-gray-800'}`}>
+                      {/* 食材/菜名 — 生食用紫色，熟菜用绿色，不显示克重 */}
+                      <span className="text-sm font-semibold min-w-0 truncate flex-1 text-center">
+                        <span className={`truncate ${isCooked ? 'text-emerald-700' : 'text-[#764ba2]'}`}>
                           {names.join("、")}
                         </span>
-                        {isCooked && record.cooked_weight_g != null && (
-                          <span className="text-[10px] text-emerald-500 font-normal whitespace-nowrap">
-                            {Math.round(record.cooked_weight_g)}g
-                          </span>
-                        )}
                       </span>
                       {/* 烹饪方式 — 菜品模式显示"熟食"，食材模式显示烹饪方式标签 */}
                       <span className="flex-shrink-0 w-[80px] flex justify-center">
                         {isCooked ? (
-                          <CookingTag method="cooked" label="熟食" />
+                          <CookingTag method="cooked" label="菜品" />
                         ) : record.cooking_method ? (
                           <CookingTag method={record.cooking_method} label={methodLabel} />
                         ) : (
@@ -744,7 +765,7 @@ export default function RecordsPage() {
                         </span>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        {isCooked ? <CookingTag method="cooked" label="熟食" /> : <CookingTag method={record.cooking_method} label={methodLabel} />}
+                        {isCooked ? <CookingTag method="cooked" label="菜品" /> : <CookingTag method={record.cooking_method} label={methodLabel} />}
                         <button type="button"
                           onClick={(e) => { e.stopPropagation(); handleEditRecord(record) }}
                           className="rounded-full p-0.5 text-[#667eea] hover:bg-[#667eea]/10 transition-all"
@@ -767,17 +788,12 @@ export default function RecordsPage() {
                       </div>
                     </div>
 
-                    {/* 食材/菜名 + 模式标签 + 克重(菜品) */}
+                    {/* 食材/菜名 + 模式标签（生食紫色，熟食绿色，不显示克重） */}
                     <div className="flex items-center gap-1 mb-0.5">
-                      <RecordModeTag mode={record.record_mode || "raw"} size="sm" />
-                      <span className={`text-[11px] lg:text-sm font-semibold truncate ${isCooked ? 'text-emerald-700' : 'text-gray-800'}`}>
+                      {showCooked && <RecordModeTag mode={record.record_mode || "raw"} size="sm" />}
+                      <span className={`text-[11px] lg:text-sm font-semibold truncate ${isCooked ? 'text-emerald-700' : 'text-[#764ba2]'}`}>
                         {names.join("、")}
                       </span>
-                      {isCooked && record.cooked_weight_g != null && (
-                        <span className="ml-auto text-[9px] font-semibold text-emerald-600 bg-emerald-50 rounded px-1 py-0.5 whitespace-nowrap">
-                          {Math.round(record.cooked_weight_g)}g
-                        </span>
-                      )}
                     </div>
 
                     {/* 营养值 — 单行水平 pills */}
@@ -1014,6 +1030,10 @@ export default function RecordsPage() {
         </div>
         )
       })()}
+
+      {/* 添加餐食记录弹窗 */}
+      <AddRecordModal open={showAddRecord} onClose={() => setShowAddRecord(false)} onSaved={() => { setShowAddRecord(false); refreshRecords() }} />
+
     </AppShell>
   )
 }

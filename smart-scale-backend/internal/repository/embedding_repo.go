@@ -6,11 +6,20 @@ import (
 	"fmt"
 	"strings"
 
+	"smart-scale-backend/internal/config"
 	"smart-scale-backend/internal/database"
 	"smart-scale-backend/internal/model"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// getEmbeddingDimension 从配置获取向量维度，默认 1024
+func getEmbeddingDimension() int {
+	if cfg := config.Get(); cfg != nil && cfg.Aliyun.EmbeddingDimension > 0 {
+		return cfg.Aliyun.EmbeddingDimension
+	}
+	return 1024
+}
 
 type EmbeddingRepository struct {
 	pool *pgxpool.Pool
@@ -72,7 +81,7 @@ func (r *EmbeddingRepository) SearchSimilar(ctx context.Context, userID int, que
 	for rows.Next() {
 		var esr model.EmbeddingSearchResult
 		var metaJSON []byte
-		embVec := make([]float64, 1536) // pgvector returns as array
+		embVec := make([]float64, getEmbeddingDimension())
 
 		if err := rows.Scan(
 			&esr.Embedding.ID, &esr.Embedding.UserID, &esr.Embedding.SourceType,
@@ -109,7 +118,7 @@ func (r *EmbeddingRepository) SearchGlobalSimilar(ctx context.Context, queryVec 
 	for rows.Next() {
 		var esr model.EmbeddingSearchResult
 		var metaJSON []byte
-		embVec := make([]float64, 1536)
+		embVec := make([]float64, getEmbeddingDimension())
 
 		if err := rows.Scan(
 			&esr.Embedding.ID, &esr.Embedding.UserID, &esr.Embedding.SourceType,

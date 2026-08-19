@@ -38,7 +38,7 @@ async def create_embedding(req: EmbeddingRequest):
     """
     将文本向量化并存储到 pgvector 数据库
     
-    - 调用 DashScope text-embedding-v2 API 获取 1536 维向量
+    - 调用 DashScope qwen3.7-text-embedding API 获取 1024 维向量
     - 自动存储到 user_health_embeddings 表
     """
     try:
@@ -139,10 +139,10 @@ async def generate_health_advice(req: GenerateAdviceRequest):
     
     流程：
     1. 构建查询文本（将当前饮食摘要转为自然语言）
-    2. 调用 DashScope text-embedding-v2 向量化查询
+    2. 调用 DashScope qwen3.7-text-embedding 向量化查询
     3. 在 pgvector 中检索 Top-K 相似历史记录
     4. 组装 Prompt（系统提示词 + 当前数据 + 历史参考上下文）
-    5. 调用 DashScope qwen-plus 生成个性化建议
+    5. 调用 DashScope qwen3.7-flash-2026-07-15 生成个性化建议
     6. 返回建议内容 + 参考上下文 + Token 用量
     """
     import uuid
@@ -225,7 +225,7 @@ async def generate_health_advice(req: GenerateAdviceRequest):
 @router.post("/parse-medical-report", summary="多模态解析体检报告")
 async def parse_medical_report(file: UploadFile = File(...)):
     """
-    使用 qwen-vl-flash 多模态模型解析体检报告图片
+    使用 qwen3.7-flash-2026-07-15 多模态模型解析体检报告图片
     
     支持上传 PNG/JPG 格式的体检报告照片，
     AI 会自动提取所有可见的医学检验指标并返回结构化 JSON。
@@ -258,7 +258,7 @@ async def parse_medical_report(file: UploadFile = File(...)):
             "data": {
                 "parsed_data": result.get("content", {}),
                 "raw_response": result.get("content", ""),
-                "model_used": result.get("model_used", "qwen-vl-flash"),
+                "model_used": result.get("model_used", "qwen3.7-flash-2026-07-15"),
                 "file_name": file.filename,
             },
         }
@@ -279,7 +279,7 @@ ALLOWED_TEXT_EXTS = {".txt", ".md", ".csv", ".json", ".html", ".htm", ".log"}
 async def chat_upload_file(file: UploadFile = File(...)):
     """
     接受图片或文本文件，解析为纯文本返回。
-    - 图片：用 qwen-vl-flash 多模态模型描述图片内容
+    - 图片：用 qwen3.7-flash-2026-07-15 多模态模型描述图片内容
     - 文本：直接读取文件内容
     返回 { code, data: { text, file_name, file_type } }
     """
@@ -353,7 +353,7 @@ async def chat(req: ChatRequest):
     start_time = time.time()
 
     try:
-        # ===== 多模态支持：有图片时用 qwen3-omni-flash，无图片时用 qwen-plus =====
+        # ===== 多模态支持：统一使用 qwen3.7-flash-2026-07-15 =====
         has_images = bool(req.images)
         if has_images:
             user_content = [{"type": "text", "text": req.message or "请分析这张图片"}]
@@ -1430,5 +1430,80 @@ def build_rag_user_prompt(summary, profile, similar_results) -> str:
     
     lines.append("")
     lines.append("请基于以上信息，给出专业的饮食健康建议：")
-    
+
     return "\n".join(lines)
+
+
+# ==================== 营养预测 API（LightGBM 多输出模型） ====================
+import pickle
+import os as _os
+import numpy as np
+
+_MODEL_PATH = _os.environ.get(
+    "LGBM_MODEL_PATH",
+    _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "..", "nutrition_lgbm_complete", "lgbm_output_multi", "multi_output_model.pkl")
+)
+_lgbm_model_cache = None
+
+TARGET_COLS_PREDICT = [
+    "cooked_weight_g", "cooked_energy_kcal", "cooked_protein_g",
+    "cooked_fat_g", "cooked_carbohydrate_g", "cooked_sodium_mg",
+    "cooked_cholesterol_mg", "cooked_vitamin_c_mg", "cooked_calcium_mg",
+    "cooked_iron_mg", "cooked_potassium_mg"
+]
+
+def _load_lgbm_model():
+    global _lgbm_model_cache
+    if _lgbm_model_cache is not None:
+        return _lgbm_model_cache
+    path = _os.path.abspath(_MODEL_PATH)
+    with open(path, "rb") as f:
+        saved = pickle.load(f)
+    _lgbm_model_cache = saved
+    return saved
+
+def predict_nutrients_sync(ingredients, weights, cooking_method):
+    """同步调用 LightGBM 预测 11 营养素"""
+    import pandas as pd
+    import numpy as np
+    saved = _load_lgbm_model()
+    model = saved["model"]
+    feature_cols = saved["feature_cols"]
+    le_method = saved["le_method"]
+    row = {col: 0 for col in feature_cols}
+    for ing in ingredients:
+        key = f"ing_{ing}"
+        if key in row:
+            row[key] = 1
+    for i, w in enumerate(weights[:4]):
+        row[f"raw_weight_{i+1}"] = w
+    row["raw_weight_total"] = sum(weights)
+    row["raw_weight_mean"] = sum(weights) / max(len(weights), 1)
+    row["n_ingredients"] = len(ingredients)
+    row["has_fruit"] = 1 if any(i in ["apple","banana","grape","kiwi","kumquat","lemon","orange","peach","pineapple","strawberry","watermelon"] for i in ingredients) else 0
+    row["has_meat"] = 1 if any(i in ["beef","chicken","pork","shrimp","fish"] for i in ingredients) else 0
+    try:
+        row["cooking_method_enc"] = le_method.transform([cooking_method])[0]
+    except:
+        row["cooking_method_enc"] = 0
+    X = pd.DataFrame([row], columns=feature_cols)
+    preds = model.predict(X)[0]
+    result = {}
+    for i, col in enumerate(TARGET_COLS_PREDICT):
+        val = float(preds[i])
+        if col in ("cooked_weight_g", "cooked_energy_kcal", "cooked_vitamin_c_mg", "cooked_calcium_mg", "cooked_sodium_mg", "cooked_cholesterol_mg", "cooked_iron_mg"):
+            val = max(0, val)
+        result[col] = round(val, 1)
+    return result
+
+class PredictNutrientsRequest(BaseModel):
+    ingredients: list
+    weights: list
+    cooking_method: str = "stir_fry"
+
+@router.post("/predict-nutrients")
+async def api_predict_nutrients(req: PredictNutrientsRequest):
+    """调用 LightGBM 模型预测 11 营养素"""
+    import asyncio
+    result = await asyncio.to_thread(predict_nutrients_sync, req.ingredients, req.weights, req.cooking_method)
+    return {"code": 0, "data": result}

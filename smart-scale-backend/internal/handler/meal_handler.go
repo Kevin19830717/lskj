@@ -16,10 +16,11 @@ import (
 
 type MealHandler struct {
 	mealService *service.MealService
+	photoService *service.PhotoRecognitionService
 }
 
-func NewMealHandler(mealService *service.MealService) *MealHandler {
-	return &MealHandler{mealService: mealService}
+func NewMealHandler(mealService *service.MealService, photoService *service.PhotoRecognitionService) *MealHandler {
+	return &MealHandler{mealService: mealService, photoService: photoService}
 }
 
 // RecordWeighIn 上报称重数据（嵌入式端调用）
@@ -232,4 +233,128 @@ func (h *MealHandler) BatchDeleteWeighRecords(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, model.SuccessWithMessage("批量删除成功", gin.H{"deleted": count}))
+}
+
+// RecognizeFoodPhoto 拍照识别食物（上传图片 → 多模态AI识别 → 返回食物+营养）
+// POST /api/v1/weigh-in/photo  (multipart/form-data, field: "file", field: "mode"=ingredient|cooked)
+func (h *MealHandler) RecognizeFoodPhoto(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "图片上传失败: "+err.Error()))
+		return
+	}
+
+	// 限制 10MB
+	if file.Size > 10*1024*1024 {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "图片大小不能超过10MB"))
+		return
+	}
+
+	// 读取识别模式：ingredient=生食材, cooked=成品菜（默认cooked）
+	mode := c.PostForm("mode")
+	if mode != "ingredient" {
+		mode = "cooked"
+	}
+
+	// 读取图片字节
+	f, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "读取图片失败"))
+		return
+	}
+	defer f.Close()
+
+	imageBytes, err := io.ReadAll(f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "读取图片失败"))
+		return
+	}
+
+	// 获取 MIME 类型
+	mimeType := file.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+
+	// 根据 mode 调用不同的识别服务
+	var result *service.PhotoRecognitionResult
+	if mode == "ingredient" {
+		result, err = h.photoService.RecognizeIngredientsFromImage(imageBytes, mimeType)
+	} else {
+		result, err = h.photoService.RecognizeFoodFromImage(imageBytes, mimeType)
+	}
+	if err != nil {
+		logrus.WithError(err).WithField("mode", mode).Warn("Photo recognition failed")
+		c.JSON(http.StatusOK, model.ErrorResp(500, "图片识别失败: "+err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Success(result))
+}
+
+// DeviceCookedRecognition 器件端正餐识别：接收图像 + 已知重量 → AI识别菜名 + 预测营养素
+// 设备调用走 DeviceAuth 中间件自动注入 user_id；测试调用从 query 参数读取
+// POST /api/v1/device/cooked-recognition（设备认证）
+// POST /api/v1/weigh-in/cooked-recognition?user_id=20（免认证测试）
+func (h *MealHandler) DeviceCookedRecognition(c *gin.Context) {
+	// user_id 优先从 context（设备认证中件），否则从 query 参数取（测试模式）
+	if c.GetInt64("user_id") == 0 {
+		userID := int64(14)
+		if uidStr := c.Query("user_id"); uidStr != "" {
+			if uid, err := strconv.ParseInt(uidStr, 10, 64); err == nil && uid > 0 {
+				userID = uid
+			}
+		}
+		c.Set("user_id", userID)
+		logrus.Infof("[Test] cooked-recognition user_id=%d (from query)", userID)
+	}
+
+	file, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "图片上传失败: "+err.Error()))
+		return
+	}
+
+	weightStr := c.PostForm("weight_g")
+	if weightStr == "" {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "缺少 weight_g 参数"))
+		return
+	}
+	weightG, err := strconv.ParseFloat(weightStr, 64)
+	if err != nil || weightG <= 0 {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "weight_g 参数无效"))
+		return
+	}
+
+	if file.Size > 10*1024*1024 {
+		c.JSON(http.StatusBadRequest, model.ErrorResp(400, "图片大小不能超过10MB"))
+		return
+	}
+
+	f, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "读取图片失败"))
+		return
+	}
+	defer f.Close()
+
+	imageBytes, err := io.ReadAll(f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "读取图片失败"))
+		return
+	}
+
+	mimeType := file.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+
+	result, err := h.photoService.RecognizeCookedDishFromImage(imageBytes, mimeType, weightG)
+	if err != nil {
+		logrus.WithError(err).Warn("Device cooked recognition failed")
+		c.JSON(http.StatusOK, model.ErrorResp(500, "正餐识别失败: "+err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Success(result))
 }

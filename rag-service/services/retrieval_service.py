@@ -27,7 +27,7 @@ async def store_embedding(
     
     Args:
         user_id: 用户ID
-        embedding: 1536维向量
+        embedding: 1024维向量
         source_text: 原始文本
         source_type: 来源类型
         source_date: 数据日期
@@ -66,7 +66,7 @@ async def similarity_search(
     在 pgvector 中执行余弦相似度检索
     
     Args:
-        query_vector: 查询向量（1536维）
+        query_vector: 查询向量（1024维）
         user_id: 用户ID
         top_k: 返回数量上限
         source_type_filter: 来源类型过滤列表

@@ -23,7 +23,7 @@ class RAGPipeline:
     
     处理步骤：
     1. Query Builder: 将结构化数据转为自然语言查询文本
-    2. Embedder: 调用 DashScope text-embedding-v2 生成向量
+    2. Embedder: 调用 DashScope qwen3.7-text-embedding 生成向量
     3. Retriever: 在 pgvector 中执行余弦相似度检索
     4. Prompt Assembler: 组装系统提示词 + 用户数据 + 历史参考
     5. Generator: 调用 qwen-plus 生成最终建议

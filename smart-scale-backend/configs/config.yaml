@@ -15,10 +15,11 @@ jwt:
   expire_hours: 24
 
 aliyun:
-  api_key: sk-07c88e8d2fe8470c934c19682c403467
-  text_model: qwen-plus
-  vl_model: qwen-vl-flash
-  embedding_model: text-embedding-v2
+  api_key: ${DASHSCOPE_API_KEY}
+  text_model: qwen3.7-flash-2026-07-15
+  vl_model: qwen3.7-flash-2026-07-15
+  embedding_model: qwen3.7-text-embedding
+  embedding_dimension: 1024
 
 upload:
   path: ./uploads

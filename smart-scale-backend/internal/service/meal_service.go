@@ -34,7 +34,7 @@ func (s *MealService) RecordWeighIn(ctx context.Context, userID int, req *model.
 		Ingredients:       req.Ingredients,
 		RawWeightsG:       req.RawWeightsG,
 		CookingMethod:     req.CookingMethod,
-		RecordMode:        "raw", // 嵌入式端默认生食材模式
+		RecordMode:        func() string { if req.RecordMode == "cooked" { return "cooked" }; return "raw" }(),
 		CookedWeightG:     v(req.CookedWeightG),
 		CookedEnergyKcal:  v(req.CookedEnergyKcal),
 		CookedProteinG:    v(req.CookedProteinG),

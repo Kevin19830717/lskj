@@ -258,13 +258,14 @@ func (r *MealRepository) GetDailyStats(ctx context.Context, userID int, date tim
 	return summary, nil
 }
 
-// GetEnergyTrend 获取热量趋势数据
+// GetEnergyTrend 获取热量趋势数据，以用户最后记录日为基准
 func (r *MealRepository) GetEnergyTrend(ctx context.Context, userID int, days int) ([]model.TrendPoint, error) {
 	query := `
 		SELECT DATE(created_at)::TEXT as date, 
 		       COALESCE(SUM(cooked_energy_kcal), 0) as energy
 		FROM weigh_records 
-		WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '1 day' * $2
+		WHERE user_id = $1 
+		  AND created_at >= (SELECT COALESCE(MAX(created_at), NOW()) FROM weigh_records WHERE user_id = $1) - INTERVAL '1 day' * $2
 		GROUP BY DATE(created_at) 
 		ORDER BY date ASC`
 

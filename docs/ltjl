@@ -1,0 +1,215 @@
+我现在参加了学校的一个项目实践，要求七天时间完成一个项目，我的倾向是弄一个前后端的东西出来，然后我的老师简介如下简介
+
+深圳技术大学特聘教授，数据科学与大数据系主任，澳门城市大学数据科学学院博士研究生导师，深圳市鹏城孔雀特聘岗位B类人才。多年来一直从事生物医学人工智能的交叉学科研究，涵盖了医学图像分析处理、深度学习算法、手术机器人、生物信息学、AI制药、癌症基因组学以及癌症早筛等多个领域，积累了丰富的研究和产业经验。至今已发表50多篇SCI和会议论文，近五年内发表第一作者及通讯作者文章30余篇。其高水平论文包括四篇Nature子刊共同作者论文：Nature Medicine、Nature Genetics、Nature Communication和Leukemia，以及两篇Cell Metabolism 论文（一篇共同第一作者，一篇共同作者）。论文总他引次数累计达到2900次，单篇第一作者文章他引次数最高达565次，共有9篇论文他引次数超过100次, H-Index为19。共获得了12项软件著作权和申请14项发明专利。回国工作以来累计获得超过300万元的纵向和横向科研项目经费。最好能够投其所好做一些跟他研究领域稍微相关一点点的东西；方向的话你可以从零开始弄也可以看看我的项目有什么能在此基础上朝着那个方向去扩展的，给出多个方案让我综合考量
+
+方案 A：体检报告智能解读 + 慢病风险早筛系统（最推荐）
+为什么最贴合：老师核心标签是「癌症早筛、医学图像分析、癌症基因组学、生物信息学」。你现有的项目已经有「体检报告 OCR 解析」功能（qwen-vl-flash 多模态提取），可以直接升级成一个独立的「体检报告解读 + 健康风险早筛」平台。
+
+做什么（前后端都覆盖）：
+
+前端：体检报告上传 → 结构化指标可视化（血压/血糖/血脂/肿瘤标志物趋势图）
+后端：多模态大模型解析 PDF/图片报告 → 结构化指标入库 → 结合用户画像（体重、饮食记录）做风险评分模型
+亮点：把现有的「称重数据 + 饮食数据」和「体检指标」打通，做一个饮食-体重-体检指标关联分析的纵向健康模型
+能挂靠的老师关键词：癌症早筛、多模态、健康大数据、纵向队列研究
+问答
+已回复
+慢病/癌症早筛风险评分引擎，你希望怎么实现？（这决定了项目技术含量和答辩亮点）
+规则引擎为主 + 大模型解读(用医学参考范围做规则分层，再交给大模型生成建议。开发快、可控、不依赖训练数据，七天最稳)
+你希望我现在就开始动手写代码，还是先只把完整的技术设计文档写出来给你看？
+先写设计文档(先把方案/表结构/接口设计写成文档，你确认后再动手), 先给方案，一行代码都别写，因为我三天后还要去比赛，我不是很想在现有基础上改动怕把我的代码改坏了
+CodeBuddy
+明白了，你三天后要比赛，绝不动现有代码，我先只给设计文档，一行代码都不写。方案方向定为：规则引擎为主 + 大模型解读。
+
+我先把几个还不太清楚的细节确认一下（避免文档里假设错误），然后给你一份完整设计文档。
+
+读取
+nutrition.go
+L1-End
+读取
+user_service.go
+L1-End
+读取
+meal.go
+L1-End
+我已经完全摸清了代码边界，确认了「现有代码在体检报告这一环是断的」这个判断。现在给你一份完整、只读、一行代码都不动的设计文档。
+
+由于你三天后要比赛、且明确要求不动现有代码，我把方案设计成 「全新独立模块，零侵入」 的架构——所有新代码都加在独立文件里，通过新增表 + 新增路由接入，不修改任何现有文件（除了最终必须的 1 处路由注册，且会明确标注，你比赛后再做）。
+
+项目扩展设计文档（v1.0）
+AI 健康管理 · 慢病与癌症早筛平台
+基于「智能饮食健康秤」的扩展方案，目标：投合导师「癌症早筛 / 医学图像分析 / 生物医学 AI」研究方向。 原则：不破坏现有任何功能，全部以新增文件 + 新增表方式实现。
+
+一、现状与差距
+现有系统已有能力：
+
+✅ 体检报告多模态 OCR（rag.py 的 parse-medical-report，调用 qwen 视觉模型）
+✅ user_profiles.medical_reports JSONB 字段 + UploadMedicalReport 接口
+✅ 用户画像（年龄/性别/身高/体重/BMI）、饮食称重数据、RAG 检索与 AI 建议
+✅ 前端成熟 UI 组件库（Card/AppShell/AnimatedNumber/WaveLoader 等）
+关键缺口（你的价值增量）：
+
+OCR 解析结果不落库、不结构化 → 无法查询/对比/追踪
+medical_reports 只是 {报告类型: 字符串} 的浅存储 → 无法做风险分析
+没有慢病/癌症风险分层引擎 → 这是挂靠「癌症早筛」的核心缺失
+没有指标趋势追踪 → 无法做纵向健康分析（老师研究强调队列/纵向）
+二、总体架构
+code
+体检报告图片
+    │  (复用现有) POST /api/v1/rag/parse-medical-report  → OCR 提取指标
+    ▼
+【新增】POST /api/v1/rag/medical/analyze
+    │   1. 调用 OCR 得到结构化指标
+    │   2. 规则引擎做风险分层（高血压/糖尿病/高血脂/高尿酸/癌症早筛）
+    │   3. 调大模型生成解读 + 饮食干预建议
+    ▼
+【新增】medical_indicators 表  +  health_risk_assessments 表
+    │
+    ▼
+【新增】Go 后端  medical handler/repository
+    │   GET /api/v1/medical/indicators   指标趋势
+    │   GET /api/v1/medical/risk         风险评分
+    │   POST /api/v1/medical/report      保存报告
+    ▼
+【新增】前端 MedicalPage.tsx  → 指标可视化 + 风险卡片 + 趋势图
+三、数据库设计（新增 2 张表，不影响现有表）
+3.1 medical_indicators — 体检指标结构化存储
+sql
+CREATE TABLE IF NOT EXISTS medical_indicators (
+    id            BIGSERIAL PRIMARY KEY,
+    user_id       INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    report_date   DATE NOT NULL,                 -- 体检日期
+    category      VARCHAR(30) NOT NULL,          -- 指标分类：blood_pressure / lipid / glucose / uric_acid / liver / kidney / tumor_marker / blood_routine
+    indicator_name VARCHAR(50) NOT NULL,         -- 指标名，如"空腹血糖"
+    indicator_key  VARCHAR(50) NOT NULL,         -- 标准化键，如"fasting_glucose"
+    value         NUMERIC(12,3),                 -- 数值
+    value_text    VARCHAR(50),                   -- 原始文本值（如"<0.5"）
+    unit          VARCHAR(20),
+    normal_range  VARCHAR(50),                   -- 参考范围文本
+    status        VARCHAR(10),                   -- normal / high / low / abnormal
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, report_date, indicator_key)  -- 同一报告同一指标去重
+);
+CREATE INDEX idx_medical_indicators_user_date ON medical_indicators(user_id, report_date DESC);
+CREATE INDEX idx_medical_indicators_user_key   ON medical_indicators(user_id, indicator_key, report_date DESC);
+3.2 health_risk_assessments — 风险评分结果
+sql
+CREATE TABLE IF NOT EXISTS health_risk_assessments (
+    id            BIGSERIAL PRIMARY KEY,
+    user_id       INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    report_date   DATE NOT NULL,
+    disease_key   VARCHAR(30) NOT NULL,          -- hypertension / diabetes / dyslipidemia / hyperuricemia / cancer_screening
+    risk_level    VARCHAR(10) NOT NULL,          -- low / medium / high
+    score         NUMERIC(5,2),                  -- 0~100 风险分
+    evidence      JSONB DEFAULT '{}',            -- 触发的异常指标及理由
+    suggestion    TEXT,                          -- 大模型生成的建议
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, report_date, disease_key)
+);
+说明：两张新表通过 user_id 关联现有 users 表，不改动任何现有表结构。
+
+四、核心：规则引擎设计（慢病/癌症早筛风险分层）
+这是本项目区别于普通 CRUD 的技术核心。采用医学参考范围规则 + 分级评分，不依赖训练数据，7 天可控。
+
+4.1 疾病维度与规则（节选，完整规则在实现时细化）
+疾病	关键指标	低风险	中风险	高风险
+高血压	收缩压/舒张压	<120/<80	120-139/80-89	≥140/≥90
+糖尿病	空腹血糖	<5.6	5.6-6.9	≥7.0
+高血脂	总胆固醇/甘油三酯/LDL	正常	边缘升高	明显升高
+高尿酸	血尿酸	<360	360-420	>420
+癌症早筛	肿瘤标志物(AFP/CEA/CA199/PSA等)	正常	轻度升高	显著升高 + 需复查
+4.2 风险评分逻辑（伪代码）
+python
+def assess_risk(indicators: list, profile: dict) -> list[RiskResult]:
+    results = []
+    for disease in RULES:                    # RULES 为配置化的规则表
+        abnormal = [i for i in indicators if i.key in disease.related_keys and is_abnormal(i)]
+        if not abnormal:
+            continue
+        score = sum(weight(i) for i in abnormal)   # 各异常指标加权求和
+        level = "high" if score >= THRESHOLD_HIGH else "medium" if score >= THRESHOLD_MED else "low"
+        results.append(RiskResult(
+            disease_key=disease.key,
+            risk_level=level,
+            score=score,
+            evidence=[{key, value, range, status} for abnormal],
+        ))
+    # 癌症早筛特殊逻辑：任一肿瘤标志物升高即标记"建议专科复查"
+    return results
+4.3 大模型解读（复用现有 call_responses_api）
+规则引擎给出风险分层后，把「异常指标 + 风险等级 + 用户饮食画像」喂给大模型，生成：
+
+通俗化解读（用户能看懂）
+饮食干预建议（复用现有 RAG，如高尿酸→低嘌呤饮食）
+就医提醒（符合医疗安全规范，不做诊断结论）
+五、API 设计（新增，全部走 RAG 服务 + Go 后端）
+RAG 服务新增（rag-service/routers/medical.py 新文件）
+端点	方法	说明
+/api/v1/rag/medical/analyze	POST	上传报告图 → OCR → 规则评分 → 大模型解读 → 落库
+/api/v1/rag/medical/risk	POST	传入结构化指标 → 返回风险分层（供前端实时预览）
+Go 后端新增（medical_handler.go 等新文件）
+端点	方法	说明
+/api/v1/medical/indicators	GET	查询某用户指标趋势（按 indicator_key 分组）
+/api/v1/medical/risk	GET	查询历史风险评估记录
+/api/v1/medical/report	POST	保存/更新体检报告与指标
+前端新增（MedicalPage.tsx 新文件）
+上传区（复用 apiUpload）
+指标表格 + 异常高亮
+风险等级卡片（低/中/高 三色）
+指标趋势折线图（复用现有图表能力）
+六、需要改动的现有文件清单（明确标注，比赛后执行）
+文件	改动	是否破坏现有功能
+router.go	新增 1 行注册 medical 路由	❌ 不影响
+前端 App.tsx/导航	新增「健康体检」菜单项	❌ 不影响
+app.py	新增 include_router 1 行	❌ 不影响
+除此之外全部是新增文件，现有功能零风险。
+
+七、与导师研究方向的映射（答辩话术）
+功能	导师标签
+多模态 OCR 结构化体检指标	医学图像分析、多模态
+肿瘤标志物 + 癌症早筛分层	癌症早筛
+规则引擎 + 分级评分	生物信息学、AI 决策
+饮食-体检纵向关联	生物医学大数据
+RAG 生成个性化干预	医疗 LLM 应用
+一句话总结：「本项目构建了一个整合多模态大模型 OCR、规则化风险分层引擎与 RAG 检索增强生成技术的慢病与癌症早筛健康管理平台，实现了体检数据的结构化、风险分层与个性化饮食干预的闭环。」
+
+八、七天实施计划（每天 2-3 小时）
+天	任务	产出
+1	建表迁移 002_medical.sql + 规则配置	表结构 + 规则常量
+2	medical.py：analyze + risk 端点 + OCR 接入	RAG 后端
+3	规则引擎实现 + 大模型解读	核心评分逻辑
+4	Go medical handler/repository	查询/保存接口
+5	MedicalPage.tsx 前端	可视化页面
+6	纵向关联（饮食→干预）+ 造演示数据	完整链路
+7	打磨 + README + 答辩准备	交付
+这份文档我先落盘到项目里（只新增一个文档文件，不动任何代码），方便你比赛后照做。
+
+将设计文档落盘到项目 docs 目录，仅新增文档文件，不改动任何现有代码。
+
+慢病与癌症早筛平台-设计文档.md
+(写入)
++204
+-0
+查看变更
+设计文档已经写好了，存在 docs/慢病与癌症早筛平台-设计文档.md（只新增了这一个文档文件，没有动任何现有代码）。
+
+给你的要点总结
+核心判断：你的项目在「体检报告」这一环是断的——OCR 能读，但不落库、不结构化、没有风险分层。这恰好是你七天的价值增量，做完链路就闭环了。
+
+方案要点：
+
+零侵入：2 张新表 + 若干新文件 + 比赛后才做的 3 处一行改动（路由注册/菜单/app.py），现有功能零风险。
+核心创新：规则引擎做慢病 + 癌症早筛风险分层（直接挂靠导师最核心的「癌症早筛」标签），再交给大模型做解读和饮食干预。
+投其所好：多模态 OCR → 医学图像分析；肿瘤标志物分层 → 癌症早筛；规则评分 → 生物信息学/AI 决策；饮食-体检纵向关联 → 生物医学大数据；RAG 建议 → 医疗 LLM。
+风险分层引擎已按你的选择定为「规则引擎为主 + 大模型解读」，不依赖训练数据，七天可控。
+
+两点提醒（针对你三天后比赛）
+比赛前别动代码：文档里第六节列了 3 处需要改的现有文件（都是加一行路由/菜单），我已经明确标注「比赛后执行」。比赛期间你的项目保持原样，绝对安全。
+
+比赛现场可以「口头讲」这个扩展：即使代码还没做，答辩时你可以用这份文档讲清楚「我的系统已经预留了体检报告多模态解析能力，下一步计划扩展为慢病+癌症早筛闭环」，这样反而体现你有清晰的规划能力，比临时堆代码加分。
+
+需要我接下来帮你做点什么？可选：
+
+把规则引擎的完整规则配置（每个疾病的指标、参考范围、权重阈值）细化成可直接实现的常量表
+帮你准备一份答辩/路演提纲（结合老师研究方向的话术）
+等你比赛结束后，再按这个文档逐步写代码
+你现在专注比赛就行，需要哪部分我随时补。

@@ -474,7 +474,7 @@ function MealDetailCard({ meal, onClose }: { meal: RecentMeal; onClose: () => vo
           <div style={{ transform: "translateZ(60px)" }} className="relative z-10 mt-1 lg:mt-2 flex flex-wrap items-center justify-center gap-2 lg:gap-3">
             <h2 className="text-base lg:text-3xl font-bold tracking-tight text-gray-900">{names.join("、")}</h2>
             <LiquidGlassButton color={cc.from} className="!px-2.5 !py-1 !text-xs lg:!px-4 lg:!py-1.5 lg:!text-sm">
-              <ChefHat className="h-2.5 w-2.5 lg:h-3 lg:w-3 mr-0.5 lg:mr-1" /> {methodLabel}
+              <span className="inline-flex items-center gap-1"><ChefHat className="h-2.5 w-2.5 lg:h-3 lg:w-3" /> {methodLabel === "cooked" ? "菜品" : methodLabel}</span>
             </LiquidGlassButton>
           </div>
 
@@ -584,7 +584,7 @@ export function RecentMealsList({ days = 30, limit = 4 }: { days?: number; limit
                       <div className="text-[11px] lg:text-sm font-medium text-gray-800 truncate">
                         {meal.ingredient_names?.join("、") || meal.ingredients.join("、")}
                       </div>
-                      <div className="text-[10px] lg:text-xs text-gray-400">{timeStr} · <span style={{ color: cc.text }}>{meal.cooking_method_label || meal.cooking_method}</span></div>
+                      <div className="text-[10px] lg:text-xs text-gray-400">{timeStr} · <span style={{ color: cc.text }}>{(meal.cooking_method_label || meal.cooking_method) === "cooked" ? "菜品" : (meal.cooking_method_label || meal.cooking_method)}</span></div>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <div className="text-[11px] lg:text-sm font-bold" style={{ color: cc.text }}>{Math.round(meal.cooked_energy_kcal)}</div>

@@ -15,6 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from config import settings
 from database.connection import get_pool, close_pool, get_connection
 from routers.rag import router as rag_router
+from routers.rag import predict_nutrients_sync, _load_lgbm_model
 
 # 配置日志
 logging.basicConfig(
@@ -46,6 +47,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Failed to initialize database: {e}")
         raise
+    
+    # 启动时预加载 LightGBM 模型，避免首个请求冷启动慢
+    try:
+        import asyncio
+        import time
+        _t0 = time.time()
+        await asyncio.to_thread(_load_lgbm_model)
+        logger.info(f"✅ LightGBM model preloaded in {time.time() - _t0:.2f}s")
+    except Exception as e:
+        logger.warning(f"⚠️ LightGBM model preload failed (will lazy-load on first request): {e}")
     
     yield
     
@@ -104,6 +115,21 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ==================== 注册路由 ====================
 
 app.include_router(rag_router, prefix="/api/v1/rag", tags=["RAG"])
+
+
+# ==================== 营养预测接口（直挂 app，nginx /rag/ 代理可用） ====================
+from pydantic import BaseModel as PyBaseModel
+
+class PredictNutrientRequest(PyBaseModel):
+    ingredients: list
+    weights: list
+    cooking_method: str = "stir_fry"
+
+@app.post("/predict-nutrients", tags=["Prediction"])
+async def predict_nutrient_api(req: PredictNutrientRequest):
+    import asyncio
+    result = await asyncio.to_thread(predict_nutrients_sync, req.ingredients, req.weights, req.cooking_method)
+    return {"code": 0, "data": result}
 
 
 # ==================== 根路径健康检查 ====================
