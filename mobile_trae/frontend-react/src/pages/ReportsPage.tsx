@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import AppShell from "@/components/app-shell"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,7 @@ const summaryTypeOptions: DropdownOption[] = [
   { value: "weekly", label: "📊 周报" },
   { value: "monthly", label: "📈 月报" },
   { value: "yearly", label: "🏆 年报" },
+  { value: "medical", label: "🩺 体检报告" },
 ]
 
 const INSIGHTS_LABELS: Record<string, string> = {
@@ -297,6 +299,7 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
 
 // ============ 主页面 ============
 export default function ReportsPage() {
+  const navigate = useNavigate()
   const [summaryType, setSummaryType] = useState("daily")
   const [summaries, setSummaries] = useState<AnalysisSummary[]>([])
   const [total, setTotal] = useState(0)
@@ -372,7 +375,7 @@ export default function ReportsPage() {
 
       {/* 类型下拉框 + 操作按钮 — 同行，下拉框放正文避免被头部 overflow 裁切 */}
       <div className="mb-2 lg:mb-3 flex items-center gap-2 lg:gap-3 flex-wrap">
-        <AnimatedDropdown options={summaryTypeOptions} value={summaryType} onChange={setSummaryType} theme="green" icon={<Clock className="h-4 w-4" />} />
+        <AnimatedDropdown options={summaryTypeOptions} value={summaryType} onChange={(v) => { if (v === "medical") { navigate("/medical-report") } else { setSummaryType(v) } }} theme="green" icon={<Clock className="h-4 w-4" />} />
         <div className="flex items-center gap-2 lg:gap-3 ml-auto">
           {summaryType !== "daily" && (
           <button disabled={backfilling} onClick={handleBackfill}

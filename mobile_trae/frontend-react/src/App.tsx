@@ -37,6 +37,7 @@ import {
 import DashboardPage from "@/pages/DashboardPage"
 import RecordsPage from "@/pages/RecordsPage"
 import ReportsPage from "@/pages/ReportsPage"
+import MedicalReportPage from "@/pages/MedicalReportPage"
 import AIChatPage from "@/pages/AIChatPage"
 import FoodsPage from "@/pages/FoodsPage"
 import ProfilePage from "@/pages/ProfilePage"
@@ -759,6 +760,7 @@ function AppRoutes() {
       <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="/records" element={<RecordsPage />} />
       <Route path="/reports" element={<ReportsPage />} />
+      <Route path="/medical-report" element={<MedicalReportPage />} />
       <Route path="/ai-chat" element={<AIChatPage />} />
       <Route path="/foods" element={<FoodsPage />} />
       <Route path="/profile" element={<ProfilePage />} />

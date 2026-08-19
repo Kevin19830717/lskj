@@ -387,3 +387,32 @@ export async function predictNutrients(ingredients: string[], weights: number[],
   const data = await resp.json().catch(() => null)
   return data
 }
+
+// ============================================================
+// 体检报告解读
+// ============================================================
+
+/** 后端多模态解析返回的原始报告 */
+export interface RawMedicalReportData {
+  report_date?: string
+  indicators?: { name?: string; value?: string | number; unit?: string; normal_range?: string; status?: string }[]
+  summary_text?: string
+}
+
+/**
+ * 体检报告照片 -> 指标结构化（qwen 多模态 OCR）
+ * POST {RAG}/parse-medical-report，返回 {code:0, data:{parsed_data, model_used,...}}
+ */
+export async function parseMedicalReport(file: File): Promise<RawMedicalReportData> {
+  const fd = new FormData()
+  fd.append("file", file)
+  const resp = await fetch(`${RAG_BASE}/parse-medical-report`, { method: "POST", body: fd })
+  if (!resp.ok) throw new Error(`体检报告解析失败: HTTP ${resp.status}`)
+  const json = await resp.json().catch(() => null)
+  if (!json || json.code !== 0) throw new Error(json?.message || "体检报告解析失败")
+  const data = json.data?.parsed_data
+  if (!data || !Array.isArray(data.indicators) || data.indicators.length === 0) {
+    throw new Error("未能从报告中识别出指标，请换一张更清晰的照片")
+  }
+  return data as RawMedicalReportData
+}
