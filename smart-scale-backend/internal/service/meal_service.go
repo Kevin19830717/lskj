@@ -29,11 +29,17 @@ func (s *MealService) RecordWeighIn(ctx context.Context, userID int, req *model.
 
 	v := func(f float64) *float64 { return &f }
 
+	// DB CHECK 约束要求 cooking_method 必须为枚举值，未传时默认 raw
+	cookingMethod := req.CookingMethod
+	if cookingMethod == "" {
+		cookingMethod = "raw"
+	}
+
 	record := &model.WeighRecord{
 		UserID:            userID,
 		Ingredients:       req.Ingredients,
 		RawWeightsG:       req.RawWeightsG,
-		CookingMethod:     req.CookingMethod,
+		CookingMethod:     cookingMethod,
 		RecordMode:        func() string { if req.RecordMode == "cooked" { return "cooked" }; return "raw" }(),
 		CookedWeightG:     v(req.CookedWeightG),
 		CookedEnergyKcal:  v(req.CookedEnergyKcal),
@@ -237,10 +243,15 @@ func (s *MealService) UpdateWeighRecord(ctx context.Context, id int64, req *mode
 	}
 
 	v := func(f float64) *float64 { return &f }
+	// DB CHECK 约束要求 cooking_method 必须为枚举值，未传时默认 raw
+	cookingMethod := req.CookingMethod
+	if cookingMethod == "" {
+		cookingMethod = "raw"
+	}
 	record := &model.WeighRecord{
 		Ingredients:         req.Ingredients,
 		RawWeightsG:         req.RawWeightsG,
-		CookingMethod:       req.CookingMethod,
+		CookingMethod:       cookingMethod,
 		CookedWeightG:       v(req.CookedWeightG),
 		CookedEnergyKcal:    v(req.CookedEnergyKcal),
 		CookedProteinG:      v(req.CookedProteinG),

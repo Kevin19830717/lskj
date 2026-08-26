@@ -418,14 +418,41 @@ async def _gather_medical_context(user_id: int) -> str:
     return "\n".join(parts) if parts else "暂无用户健康数据。"
 
 
+def _compress_image(contents: bytes, max_width: int = 1600, quality: int = 60) -> tuple[bytes, str]:
+    """压缩图片：限制宽度上限 + JPEG 重编码。失败时原样返回，不阻断流程。"""
+    import io
+    from PIL import Image
+
+    try:
+        img = Image.open(io.BytesIO(contents))
+        # 透明通道（PNG）铺白底，避免转 JPEG 变黑
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGBA")
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        # 只缩不放，保持纵横比
+        if img.width > max_width:
+            new_h = int(img.height * max_width / img.width)
+            img = img.resize((max_width, new_h), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return contents, "image/jpeg"
+
+
 async def _ocr_medical_report(file: UploadFile) -> dict:
     """多模态 OCR：体检报告图片 -> 结构化指标 dict"""
     from prompts.system_prompt import get_system_prompt_for_medical_parser
     import base64
 
     contents = await file.read()
+    contents, content_type = _compress_image(contents)
+    logger.info(f"OCR image after compress: {len(contents) / 1024:.0f}KB")
     image_base64 = base64.b64encode(contents).decode("utf-8")
-    content_type = file.content_type or "image/jpeg"
     messages = [{
         "role": "user",
         "content": [
@@ -433,9 +460,14 @@ async def _ocr_medical_report(file: UploadFile) -> dict:
             {"text": get_system_prompt_for_medical_parser()},
         ],
     }]
-    result = await generate_multimodal(messages=messages, max_tokens=2048)
-    parsed = _extract_json_block(result.get("content", ""))
+    result = await generate_multimodal(messages=messages, max_tokens=4096)
+    raw_content = result.get("content", "")
+    parsed = _extract_json_block(raw_content)
     if not parsed or not isinstance(parsed.get("indicators"), list) or not parsed["indicators"]:
+        logger.warning(
+            f"OCR JSON 提取失败 | finish_reason={result.get('finish_reason')} | "
+            f"len={len(raw_content)} | head={raw_content[:300]!r} | tail={raw_content[-200:]!r}"
+        )
         raise HTTPException(status_code=422, detail="未能从报告中识别出指标，请换一张更清晰的照片")
     return parsed
 
@@ -449,13 +481,23 @@ async def analyze_medical_report(
     完整流水线：OCR 解析体检报告 -> 关联用户餐食记录/营养报告/健康档案 ->
     大模型综合分析 -> 存入 medical_reports 表 -> 返回完整记录
     """
-    from services.generation_service import generate_text
     from prompts.system_prompt import get_system_prompt_for_medical_comprehensive
     from datetime import datetime
 
     try:
         # 1. OCR 解析
-        parsed = await _ocr_medical_report(file)
+        try:
+            parsed = await _ocr_medical_report(file)
+        except HTTPException:
+            raise
+        except Exception as e:
+            msg = str(e)
+            if "FreeTierOnly" in msg or "Free quota exhausted" in msg:
+                raise HTTPException(
+                    status_code=402,
+                    detail="AI 免费额度已用完：请在阿里云百炼控制台充值或关闭「仅使用免费额度」模式，额度每日会自动重置一部分，明早可再试。",
+                )
+            raise HTTPException(status_code=502, detail=f"报告识别失败，请稍后重试：{msg[:200]}")
         indicators = parsed.get("indicators", [])
 
         # 2. 用户健康上下文（档案 + 餐食 + 营养报告）
@@ -468,19 +510,33 @@ async def analyze_medical_report(
                 f"- {it.get('name', '?')}：{it.get('value', '?')}{it.get('unit') or ''} "
                 f"（参考范围 {it.get('normal_range') or '未提供'}，状态 {it.get('status') or '未知'}）"
             )
-        report_date = parsed.get("report_date") or datetime.now().strftime("%Y-%m-%d")
+        # 校验 OCR 提取的日期：格式合法且在合理区间才采用，否则兜底为上传日
+        raw_date = parsed.get("report_date")
+        report_date = datetime.now().strftime("%Y-%m-%d")
+        if raw_date:
+            try:
+                d = datetime.strptime(str(raw_date)[:10], "%Y-%m-%d")
+                if datetime(1990, 1, 1) <= d <= datetime.now():
+                    report_date = d.strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                pass
         user_prompt = (
             f"体检日期：{report_date}\n\n【体检指标】\n" + "\n".join(ind_lines)
             + f"\n\nOCR 摘要：{parsed.get('summary_text', '无')}\n\n{context}"
         )
 
         # 4. 大模型综合分析（失败不阻断存储，ai_summary 置空由前端兜底）
+        # 走 chat/completions 通道（generate_multimodal 也接受纯文本消息）：
+        # - enable_thinking:false 在此通道确认生效，仅本处关思考提速，AI对话等不受影响
+        # - 默认模型即 VL_MODEL(qwen3.7-flash)，与第1步 OCR 统一模型
         ai_summary = {}
         model_used = ""
         try:
-            result = await generate_text(
-                system_prompt=get_system_prompt_for_medical_comprehensive(),
-                user_prompt=user_prompt,
+            result = await generate_multimodal(
+                messages=[
+                    {"role": "system", "content": get_system_prompt_for_medical_comprehensive()},
+                    {"role": "user", "content": user_prompt},
+                ],
                 temperature=0.4,
                 max_tokens=2048,
             )

@@ -10,10 +10,11 @@ import (
 
 type AuthHandler struct {
 	authService *service.AuthService
+	userService *service.UserService
 }
 
-func NewAuthHandler(authService *service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService *service.AuthService, userService *service.UserService) *AuthHandler {
+	return &AuthHandler{authService: authService, userService: userService}
 }
 
 // Register 用户注册
@@ -59,9 +60,8 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	userService := c.MustGet("user_service").(*service.UserService)
 	ctx := c.Request.Context()
-	profile, err := userService.GetProfile(ctx, int(userID.(int64)))
+	profile, err := h.userService.GetProfile(ctx, int(userID.(int64)))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to get user info"))
 		return

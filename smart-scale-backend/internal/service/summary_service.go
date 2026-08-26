@@ -127,8 +127,9 @@ func (s *SummaryService) GenerateSummary(ctx context.Context, userID int, summar
 	}
 
 	// 周/月/年报：从下级报告聚合
+	// 注意：FindByDateRange 为闭区间（<=），periodEnd 是半开区间终点，需换算成含当天结束日，否则会把下周期首日的下级报告也聚合进来（多算一天）
 	subType := map[string]string{"weekly": "daily", "monthly": "weekly", "yearly": "monthly"}[summaryType]
-	subReports, err := s.summaryRepo.FindByDateRange(ctx, userID, subType, periodStart, periodEnd)
+	subReports, err := s.summaryRepo.FindByDateRange(ctx, userID, subType, periodStart, periodEndInclusive(periodStart, summaryType))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query %s summaries: %w", subType, err)
 	}
@@ -732,6 +733,7 @@ func (s *SummaryService) mergeInsights(ctx context.Context, summaries []*model.A
 	var totalSodium, totalCholesterol, totalVitaminC, totalCalcium, totalIron, totalPotassium float64
 	var totalMeals int
 	foodFreq := make(map[string]int)
+	foodWeight := make(map[string]float64) // 累计各食物总克重（修复 top_foods 克重全 0）
 	var earliestStart, latestEnd string // 真正的最早开始和最晚结束
 
 	for _, sum := range summaries {
@@ -787,6 +789,9 @@ func (s *SummaryService) mergeInsights(ctx context.Context, summaries []*model.A
 					if nameEn != "" {
 						if cnt, ok := m["count"].(float64); ok {
 							foodFreq[nameEn] += int(cnt)
+						}
+						if w, ok := m["total_weight_g"].(float64); ok {
+							foodWeight[nameEn] += w
 						}
 					}
 				}
@@ -845,7 +850,7 @@ func (s *SummaryService) mergeInsights(ctx context.Context, summaries []*model.A
 		if n, ok := nameMap[name]; ok && n != "" {
 			cnName = n
 		}
-		topFoods = append(topFoods, model.FoodFrequency{NameEn: name, Name: cnName, Count: count})
+		topFoods = append(topFoods, model.FoodFrequency{NameEn: name, Name: cnName, Count: count, TotalWeightG: math.Round(foodWeight[name]*100) / 100})
 	}
 	sortFoods(topFoods)
 	if len(topFoods) > 10 {
@@ -1567,8 +1572,8 @@ func (s *SummaryService) BackfillSummaries(ctx context.Context, userID int, star
 			continue
 		}
 
-		// 查该周日报，必须满7天
-		dailySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "daily", weekStart, weekStart.AddDate(0, 0, 7))
+		// 查该周日报，必须满7天（weekEndIncl 为该周周日，闭区间终点）
+		dailySummaries, err := s.summaryRepo.FindByDateRange(ctx, userID, "daily", weekStart, weekEndIncl)
 		if err != nil || len(dailySummaries) < 7 {
 			continue
 		}

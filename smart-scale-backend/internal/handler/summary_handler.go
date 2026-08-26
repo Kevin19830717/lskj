@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"smart-scale-backend/internal/model"
 	"smart-scale-backend/internal/service"
 
@@ -121,7 +122,14 @@ func (h *SummaryHandler) DeleteSummary(c *gin.Context) {
 	}
 
 	if err := h.summarySvc.DeleteSummary(c.Request.Context(), int(userID), id); err != nil {
-		c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to delete summary: "+err.Error()))
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			c.JSON(http.StatusNotFound, model.ErrorResp(404, "Summary not found"))
+		case strings.Contains(err.Error(), "does not belong"):
+			c.JSON(http.StatusForbidden, model.ErrorResp(403, "Summary does not belong to this user"))
+		default:
+			c.JSON(http.StatusInternalServerError, model.ErrorResp(500, "Failed to delete summary: "+err.Error()))
+		}
 		return
 	}
 

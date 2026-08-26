@@ -68,9 +68,12 @@ const KNOWN: Record<string, KnownDef> = {
   "crea": { code: "CR", name: "血肌酐", group: "尿酸与代谢", unit: "μmol/L", refLow: 57, refHigh: 111 },
   // 肝功能
   "谷丙转氨酶": { code: "ALT", name: "谷丙转氨酶", group: "肝功能", unit: "U/L", refLow: 9, refHigh: 50 },
+  "丙氨酸氨基转移酶": { code: "ALT", name: "谷丙转氨酶", group: "肝功能", unit: "U/L", refLow: 9, refHigh: 50 },
   "alt": { code: "ALT", name: "谷丙转氨酶", group: "肝功能", unit: "U/L", refLow: 9, refHigh: 50 },
   "sgpt": { code: "ALT", name: "谷丙转氨酶", group: "肝功能", unit: "U/L", refLow: 9, refHigh: 50 },
   "谷草转氨酶": { code: "AST", name: "谷草转氨酶", group: "肝功能", unit: "U/L", refLow: 15, refHigh: 40 },
+  "天冬氨酸氨基转移酶": { code: "AST", name: "谷草转氨酶", group: "肝功能", unit: "U/L", refLow: 15, refHigh: 40 },
+  "门冬氨酸氨基转移酶": { code: "AST", name: "谷草转氨酶", group: "肝功能", unit: "U/L", refLow: 15, refHigh: 40 },
   "ast": { code: "AST", name: "谷草转氨酶", group: "肝功能", unit: "U/L", refLow: 15, refHigh: 40 },
   "sgot": { code: "AST", name: "谷草转氨酶", group: "肝功能", unit: "U/L", refLow: 15, refHigh: 40 },
   "谷氨酰转肽酶": { code: "GGT", name: "γ-谷氨酰转肽酶", group: "肝功能", unit: "U/L", refLow: 10, refHigh: 60 },

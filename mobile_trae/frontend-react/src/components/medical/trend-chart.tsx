@@ -53,7 +53,8 @@ export function TrendChart({ trends, dates, indicators }: TrendChartProps) {
 
   const W = 320
   const H = 130
-  const px = (i: number) => 30 + (i * (W - 44)) / (n - 1)
+  // 左右各留边距，避免首尾日期/数值标签超出画布
+  const px = (i: number) => 38 + (i * (W - 58)) / (n - 1)
   const py = (v: number) => 12 + ((max - v) / (max - min)) * (H - 30)
 
   const path = series.map((v, i) => `${i === 0 ? "M" : "L"}${px(i)},${py(v)}`).join(" ")
@@ -94,7 +95,7 @@ export function TrendChart({ trends, dates, indicators }: TrendChartProps) {
               x1={26} x2={W - 8} y1={py(cur.refHigh)} y2={py(cur.refHigh)}
               stroke="#f59e0b" strokeDasharray="4 4" strokeWidth="1"
             />
-            <text x={W - 8} y={py(cur.refHigh) - 3} textAnchor="end" fontSize="8" fill="#d97706">
+            <text x={W - 10} y={Math.max(py(cur.refHigh) - 3, 9)} textAnchor="end" fontSize="8" fill="#d97706">
               上限 {cur.refHigh}
             </text>
           </g>
@@ -141,27 +142,35 @@ export function TrendChart({ trends, dates, indicators }: TrendChartProps) {
               />
               {isLast && (
                 <g>
-                  <rect
-                    x={Math.min(Math.max(px(i) - 20, 2), W - 42)} y={py(v) - 22}
-                    width="40" height="15" rx="4"
-                    fill="#065f46" opacity="0.92"
-                  />
-                  <text
-                    x={Math.min(Math.max(px(i) - 20, 2), W - 42) + 20} y={py(v) - 11}
-                    textAnchor="middle" fontSize="9" fill="#fff" fontWeight="600"
-                  >
-                    {v}
-                  </text>
+                  {(() => {
+                    const bx = Math.min(Math.max(px(i) - 20, 2), W - 42)
+                    const by = Math.max(py(v) - 22, 2)
+                    return (
+                      <>
+                        <rect x={bx} y={by} width="40" height="15" rx="4" fill="#065f46" opacity="0.92" />
+                        <text x={bx + 20} y={by + 11} textAnchor="middle" fontSize="9" fill="#fff" fontWeight="600">
+                          {v}
+                        </text>
+                      </>
+                    )
+                  })()}
                 </g>
               )}
             </motion.g>
           )
         })}
 
-        {/* 日期轴 */}
+        {/* 日期轴：首尾锚点内收，避免左右越界被裁 */}
         {dates.slice(0, n).map((d, i) =>
           n > 8 && i % 2 === 1 ? null : (
-            <text key={i} x={px(i)} y={H - 0} textAnchor="middle" fontSize="8" fill="#94a3b8">
+            <text
+              key={i}
+              x={px(i)}
+              y={H - 1}
+              textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}
+              fontSize="8"
+              fill="#94a3b8"
+            >
               {d}
             </text>
           ),

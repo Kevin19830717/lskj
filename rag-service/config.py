@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     # DashScope API (OpenAI 兼容模式)
     DASHSCOPE_API_KEY: str = ""
     TEXT_MODEL: str = "qwen3.7-flash-2026-07-15"
-    VL_MODEL: str = "qwen3.7-flash-2026-07-15"
-    OMNI_MODEL: str = "qwen3.7-flash-2026-07-15"  # 统一使用 qwen3.7-flash-2026-07-15
+    VL_MODEL: str = "qwen3.7-flash"  # 体检报告 OCR 视觉模型
+    OMNI_MODEL: str = "qwen3.7-flash-2026-07-15"  # AI 对话（含图）使用
     EMBEDDING_MODEL: str = "qwen3.7-text-embedding"
 
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"

@@ -258,8 +258,6 @@ func (s *UserService) GetHealthScore(ctx context.Context, userID int) (int, erro
 		score -= 30 // 过低
 	case avgEnergy < 1500:
 		score -= 15 // 偏低
-	case avgEnergy >= 2000 && avgEnergy <= 2500:
-		score = score // 理想范围
 	case avgEnergy > 3000:
 		score -= 25 // 过高
 	case avgEnergy > 2500:

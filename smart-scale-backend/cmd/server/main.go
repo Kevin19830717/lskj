@@ -73,7 +73,7 @@ func main() {
 	deviceSvc := service.NewDeviceService(deviceRepo)
 
 	// 7. 初始化 Handler 层
-	authHandler := handler.NewAuthHandler(authSvc)
+	authHandler := handler.NewAuthHandler(authSvc, userSvc)
 	userHandler := handler.NewUserHandler(userSvc, authSvc)
 	mealHandler := handler.NewMealHandler(mealSvc, photoSvc)
 	foodHandler := handler.NewFoodHandler(foodSvc)

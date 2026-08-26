@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import AppShell from "@/components/app-shell"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -77,6 +77,19 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
   const ins = summary.insights
   const isDaily = summary.summary_type === "daily"
 
+  // ===== 隐藏原生滚动条，用头部渐变进度条反馈滚动位置（ref 直改 DOM，零重渲染） =====
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+  const updateScrollProgress = useCallback(() => {
+    const el = scrollRef.current
+    const bar = barRef.current
+    if (!el || !bar) return
+    const max = el.scrollHeight - el.clientHeight
+    bar.style.width = max > 0 ? `${Math.min(el.scrollTop / max, 1) * 100}%` : "0%"
+  }, [])
+  // 切换 tab 后内容高度变化，重算一次
+  useEffect(() => { requestAnimationFrame(updateScrollProgress) }, [activeTab, updateScrollProgress])
+
   // 日均除数（与后端 mergeInsights 保持一致：周=7，月=30，年=365）
   const periodDiv = useMemo(() => {
     switch (summary.summary_type) {
@@ -139,7 +152,7 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
 
   return (
     <div className="fixed inset-0 z-[60] flex items-end lg:items-center justify-center bg-black/45 px-0 lg:px-4 py-0 lg:py-8" onClick={onClose}>
-      <div className="w-full max-w-3xl max-h-[90vh] lg:max-h-[85vh] overflow-y-auto rounded-t-3xl lg:rounded-3xl bg-white border border-gray-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div ref={scrollRef} onScroll={updateScrollProgress} className="w-full max-w-3xl max-h-[90vh] lg:max-h-[85vh] overflow-y-auto hide-scrollbar rounded-t-3xl lg:rounded-3xl bg-white border border-gray-200 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b px-4 lg:px-6 py-3 lg:py-4 sticky top-0 z-10" style={{ backgroundColor: tg.bg }}>
           <div>
             <h4 className="text-lg font-semibold flex items-center gap-2">
@@ -150,6 +163,11 @@ function ReportDetailModal({ summary, onClose }: { summary: AnalysisSummary; onC
             <p className="text-xs text-gray-500 mt-1">{!isDaily ? `共 ${periodDiv} 天` : ""}</p>
           </div>
           <button onClick={onClose} className="rounded-full p-2 text-gray-400 hover:bg-gray-100"><X className="h-5 w-5" /></button>
+          {/* 滚动进度条：轨道极淡，前景随报告类型渐变 */}
+          <div className="absolute left-0 right-0 bottom-0 h-[3px] bg-black/10">
+            <div ref={barRef} className="h-full w-0 transition-[width] duration-100 ease-out"
+              style={{ backgroundImage: `linear-gradient(to right, ${tg.from}, ${tg.to})` }} />
+          </div>
         </div>
         {!isDaily && (
           <div className="px-4 lg:px-6 pt-4">

@@ -146,7 +146,17 @@ meal_combinations = {
 }
 
 # 4. 计算营养素（按食物名称和克重，忽略不在数据库的食材如牛奶、西兰花）
-def calc_nutrition(items):
+# 烹饪附加：只加油脂(9kcal/g)和盐(钠)，维生素C按热加工损失
+COOKING_EXTRAS = {
+    #   (油g, 钠mg, 维C保留率)
+    "stir_fry": (18, 700, 0.85),
+    "pan_fry":  (14, 650, 0.85),
+    "braise":   (13, 800, 0.80),
+    "steam":    (4, 350, 0.75),
+    "boil":     (2, 300, 0.70),
+}
+
+def calc_nutrition(items, method):
     """items: [(food_name, weight_g), ...]"""
     totals = {"kcal":0, "protein":0, "fat":0, "carb":0,
               "sodium":0, "chol":0, "vit_c":0, "calcium":0, "iron":0, "potassium":0}
@@ -162,15 +172,12 @@ def calc_nutrition(items):
             total_weight += w
         # 跳过不在31种基础食材里的（如牛奶、西兰花）
 
-    # 烹饪后密度提升（油炒比生重能量密度高）×2.5 系数，再加调味
-    for k in totals:
-        if k != "sodium":
-            totals[k] *= 2.5
-    # 加上烹饪调味：每餐 +135 kcal, +15g 脂肪, +1g 蛋白, +1180mg 钠
-    totals["kcal"] += 135
-    totals["fat"] += 15
-    totals["protein"] += 1
-    totals["sodium"] += 1180
+    # 烹饪油脂与盐：只增能量/脂肪/钠，维C热损失
+    oil_g, salt_mg, vit_c_keep = COOKING_EXTRAS.get(method, (8, 600, 0.85))
+    totals["kcal"] += oil_g * 9
+    totals["fat"] += oil_g
+    totals["sodium"] += salt_mg
+    totals["vit_c"] *= vit_c_keep
     return totals, total_weight, valid_names
 
 # 5. 餐次时间
@@ -189,13 +196,24 @@ records_added = 0
 current_date = start_date
 
 while current_date <= end_date:
+    # 先为当天选好三餐模板，按日总热量校准克重系数，保证全天 2200~2500 kcal
+    day_templates = {mt: random.choice(meal_combinations[mt])
+                     for mt in ("breakfast", "lunch", "dinner")}
+    base_day_kcal = 350  # 三餐烹饪油脂的估算贡献
+    for t in day_templates.values():
+        for name, w in t["items"]:
+            if name in foods:
+                base_day_kcal += foods[name]["kcal"] * w / 100.0
+    scale = max(1.2, min(2.0, 2350.0 / base_day_kcal)) if base_day_kcal > 0 else 1.5
+
     for meal_type in ["breakfast", "lunch", "dinner"]:
-        template = random.choice(meal_combinations[meal_type])
-        # 克重 ×1.5 让总热量接近真实水平
-        items = [(name, int(w * 1.5)) for name, w in template["items"]]
+        template = day_templates[meal_type]
+        # 克重 = 模板克重 × 日校准系数 × 每餐 ±8% 随机波动
+        jitter = random.uniform(0.92, 1.08)
+        items = [(name, int(round(w * scale * jitter))) for name, w in template["items"]]
         method = template["method"]
 
-        nut, total_weight, valid_names = calc_nutrition(items)
+        nut, total_weight, valid_names = calc_nutrition(items, method)
         if not valid_names:
             continue
 
@@ -274,14 +292,17 @@ cur.execute("""
 daily_count = 0
 for row in cur.fetchall():
     d = row[0]
-    # 查当天 top 食材
+    # 查当天 top 食材（WITH ORDINALITY 按索引配对食材与克重，避免笛卡尔积）
     cur.execute("""
-        SELECT ingredient, COUNT(*) as cnt, SUM(weight_g::numeric) as total_w
-        FROM weigh_records_default w,
-             LATERAL jsonb_array_elements_text(w.ingredients) AS ingredient,
-             LATERAL jsonb_array_elements(w.raw_weights_g) AS weight_g
-        WHERE w.user_id = 20 AND DATE(w.created_at) = %s
-        GROUP BY ingredient ORDER BY cnt DESC LIMIT 5
+        SELECT ingredient, COUNT(*) as cnt, SUM(weight::numeric) as total_w
+        FROM (
+            SELECT ing.ingredient, wgt.weight
+            FROM weigh_records_default w
+            CROSS JOIN LATERAL jsonb_array_elements_text(w.ingredients) WITH ORDINALITY AS ing(ingredient, idx)
+            CROSS JOIN LATERAL jsonb_array_elements(w.raw_weights_g) WITH ORDINALITY AS wgt(weight, idx)
+            WHERE w.user_id = 20 AND DATE(w.created_at) = %s AND ing.idx = wgt.idx
+        ) sub
+        GROUP BY ingredient ORDER BY cnt DESC, total_w DESC LIMIT 5
     """, (d,))
     top_foods = []
     for fr in cur.fetchall():
@@ -323,16 +344,27 @@ week_ranges = [
 ]
 weekly_count = 0
 for start, end in week_ranges:
+    # 周期最后一整天（周日），与后端 periodEndInclusive 格式对齐
+    end_inclusive = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
     cur.execute("""
         SELECT AVG(daily_kcal), AVG(daily_protein), AVG(daily_fat), AVG(daily_carb),
                SUM(daily_kcal), SUM(daily_protein), SUM(daily_fat), SUM(daily_carb),
-               COUNT(*)
+               SUM(daily_sodium), SUM(daily_chol), SUM(daily_vit_c), SUM(daily_calcium),
+               SUM(daily_iron), SUM(daily_potassium),
+               SUM(daily_meals), COUNT(*)
         FROM (
             SELECT DATE(created_at) as d,
                    SUM(cooked_energy_kcal) as daily_kcal,
                    SUM(cooked_protein_g) as daily_protein,
                    SUM(cooked_fat_g) as daily_fat,
-                   SUM(cooked_carbohydrate_g) as daily_carb
+                   SUM(cooked_carbohydrate_g) as daily_carb,
+                   SUM(cooked_sodium_mg) as daily_sodium,
+                   SUM(cooked_cholesterol_mg) as daily_chol,
+                   SUM(cooked_vitamin_c_mg) as daily_vit_c,
+                   SUM(cooked_calcium_mg) as daily_calcium,
+                   SUM(cooked_iron_mg) as daily_iron,
+                   SUM(cooked_potassium_mg) as daily_potassium,
+                   COUNT(*) as daily_meals
             FROM weigh_records_default
             WHERE user_id = 20 AND created_at >= %s AND created_at < %s
             GROUP BY DATE(created_at)
@@ -340,23 +372,25 @@ for start, end in week_ranges:
     """, (start, end))
     r = cur.fetchone()
     if r and r[0]:
-        # 查周内 top 食材
+        # 查周内 top 食材（WITH ORDINALITY 按索引配对，避免取错克重）
         cur.execute("""
-            SELECT ingredient, COUNT(*) as cnt, SUM(weight_g) as total_w
+            SELECT ingredient, COUNT(*) as cnt, SUM(weight::numeric) as total_w
             FROM (
-                SELECT jsonb_array_elements_text(ingredients) as ingredient,
-                       (raw_weights_g->>0)::numeric as weight_g
-                FROM weigh_records_default
-                WHERE user_id = 20 AND created_at >= %s AND created_at < %s
+                SELECT ing.ingredient, wgt.weight
+                FROM weigh_records_default w
+                CROSS JOIN LATERAL jsonb_array_elements_text(w.ingredients) WITH ORDINALITY AS ing(ingredient, idx)
+                CROSS JOIN LATERAL jsonb_array_elements(w.raw_weights_g) WITH ORDINALITY AS wgt(weight, idx)
+                WHERE w.user_id = 20 AND created_at >= %s AND created_at < %s AND ing.idx = wgt.idx
             ) sub
-            GROUP BY ingredient ORDER BY cnt DESC LIMIT 10
+            GROUP BY ingredient ORDER BY cnt DESC, total_w DESC LIMIT 10
         """, (start, end))
         top_foods = [{"name": fr[0], "name_en": fr[0], "count": int(fr[1]), "total_weight_g": float(fr[2] or 0)}
                      for fr in cur.fetchall()]
 
         insights = {
             "period_start": start,
-            "period_end": end,
+            "period_end": end_inclusive,
+            "total_meals": int(r[14] or 0),
             "avg_daily_energy_kcal": float(r[0]),
             "avg_daily_protein_g": float(r[1]),
             "avg_daily_fat_g": float(r[2]),
@@ -365,8 +399,15 @@ for start, end in week_ranges:
             "total_protein_g": float(r[5]),
             "total_fat_g": float(r[6]),
             "total_carbohydrate_g": float(r[7]),
+            "total_sodium_mg": round(float(r[8] or 0), 2),
+            "total_cholesterol_mg": round(float(r[9] or 0), 2),
+            "total_vitamin_c_mg": round(float(r[10] or 0), 2),
+            "total_calcium_mg": round(float(r[11] or 0), 2),
+            "total_iron_mg": round(float(r[12] or 0), 2),
+            "total_potassium_mg": round(float(r[13] or 0), 2),
             "top_foods": top_foods,
-            "days_with_data": int(r[8]),
+            "recommendations": ["当前饮食结构较为均衡，请继续保持良好饮食习惯"],
+            "days_with_data": int(r[15]),
         }
         cur.execute("""
             INSERT INTO user_analysis_summaries
@@ -397,16 +438,17 @@ cur.execute("""
 monthly_count = 0
 for row in cur.fetchall():
     m = datetime(2026, 7, 1).date()
-    # 查月内 top 食材
+    # 查月内 top 食材（WITH ORDINALITY 按索引配对，避免取错克重）
     cur.execute("""
-        SELECT ingredient, COUNT(*) as cnt, SUM(weight_g) as total_w
+        SELECT ingredient, COUNT(*) as cnt, SUM(weight::numeric) as total_w
         FROM (
-            SELECT jsonb_array_elements_text(ingredients) as ingredient,
-                   (raw_weights_g->>0)::numeric as weight_g
-            FROM weigh_records_default
-            WHERE user_id = 20 AND created_at >= '2026-07-01' AND created_at < '2026-08-01'
+            SELECT ing.ingredient, wgt.weight
+            FROM weigh_records_default w
+            CROSS JOIN LATERAL jsonb_array_elements_text(w.ingredients) WITH ORDINALITY AS ing(ingredient, idx)
+            CROSS JOIN LATERAL jsonb_array_elements(w.raw_weights_g) WITH ORDINALITY AS wgt(weight, idx)
+            WHERE w.user_id = 20 AND created_at >= '2026-07-01' AND created_at < '2026-08-01' AND ing.idx = wgt.idx
         ) sub
-        GROUP BY ingredient ORDER BY cnt DESC LIMIT 10
+        GROUP BY ingredient ORDER BY cnt DESC, total_w DESC LIMIT 10
     """)
     top_foods = [{"name": fr[0], "name_en": fr[0], "count": int(fr[1]), "total_weight_g": float(fr[2] or 0)}
                  for fr in cur.fetchall()]

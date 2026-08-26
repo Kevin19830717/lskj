@@ -145,7 +145,8 @@ async def generate_multimodal(
     max_tokens: int = 2048,
 ) -> Dict[str, Any]:
     """
-    调用多模态 Chat Completions API（新版 OpenAI 兼容格式，用于图片理解）
+    调用多模态 Chat Completions API（新版 OpenAI 兼容格式，用于图片理解；
+    content 传纯字符串即为纯文本调用，体检报告综合分析走此通道以复用 enable_thinking:false）
 
     Args:
         messages: 消息列表，支持图片 base64 或 image_url 格式
@@ -188,6 +189,7 @@ async def generate_multimodal(
         "messages": chat_messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "enable_thinking": False,  # OCR 场景不需要思考过程，避免 <think> 内容破坏 JSON
     }
 
     last_error = None
@@ -200,7 +202,8 @@ async def generate_multimodal(
                     data = response.json()
                     choices = data.get("choices", [])
                     content = choices[0]["message"]["content"] if choices else ""
-                    return {"content": content, "model_used": model_name}
+                    finish_reason = choices[0].get("finish_reason") if choices else None
+                    return {"content": content, "model_used": model_name, "finish_reason": finish_reason}
                 elif response.status_code == 429:
                     import asyncio
                     await asyncio.sleep(attempt * 2)

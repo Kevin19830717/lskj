@@ -68,9 +68,7 @@ func (s *FoodService) GetFoodByID(ctx context.Context, id int64) (*model.Food, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to get food: %w", err)
 	}
-	if food == nil {
-		return nil, fmt.Errorf("food not found with id=%d", id)
-	}
+	// 不存在时返回 (nil, nil)，由 handler 层返回 404
 	return food, nil
 }
 
